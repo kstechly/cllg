@@ -176,17 +176,6 @@ def test_cllg_print_deep_code_uses_active_session(
     assert [record["agent"] for record in records] == [{"scope": "deep"}]
 
 
-def test_session_has_no_public_event_api(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
-
-    with cllg() as session:
-        assert not hasattr(session, "event")
-
-
 def test_unique_run_path_creates_distinct_dirs_under_same_stem(
     tmp_path: Path,
 ) -> None:
@@ -531,7 +520,7 @@ def test_cllg_keeps_stdout_as_real_text_stream(
         assert isinstance(sys.stdout, io.TextIOBase)
 
 
-def test_progress_writes_one_marker_without_terminal_output_in_json_mode(
+def test_progress_writes_records_for_start_message_and_each_update(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -546,14 +535,38 @@ def test_progress_writes_one_marker_without_terminal_output_in_json_mode(
 
     assert stream.getvalue() == ""
     records = _read_prints(session.path / "prints.jsonl")
-    assert len(records) == 1
-    assert records[0]["kind"] == "progress"
-    assert records[0]["human"] == "smoke fixed limerick"
-    assert records[0]["agent"]["event"] == "progress_start"
-    assert records[0]["agent"]["total"] == 2
+    assert [record["kind"] for record in records] == [
+        "progress_start",
+        "progress_message",
+        "progress_advance",
+        "progress_advance",
+    ]
+
+    start = records[0]
+    assert start["human"] == "smoke fixed limerick"
+    assert start["agent"] == {}
+    assert start["title"] == "smoke fixed limerick"
+    assert start["total"] == 2
+
+    message = records[1]
+    assert message["human"] == "loaded"
+    assert message["agent"] == {"event": "loaded"}
+    assert message["current"] == 0
+    assert message["total"] == 2
+
+    first_advance = records[2]
+    assert first_advance["human"] == "replication 1"
+    assert first_advance["agent"] == {"replication": 1}
+    assert first_advance["current"] == 1
+    assert first_advance["total"] == 2
+    assert first_advance["advance"] == 1
+
+    second_advance = records[3]
+    assert second_advance["agent"] == {"replication": 2}
+    assert second_advance["current"] == 2
 
 
-def test_non_tty_progress_records_marker_only(
+def test_non_tty_progress_records_start_and_advance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -566,4 +579,9 @@ def test_non_tty_progress_records_marker_only(
 
     assert stream.getvalue() == ""
     records = _read_prints(session.path / "prints.jsonl")
-    assert [record["kind"] for record in records] == ["progress"]
+    assert [record["kind"] for record in records] == [
+        "progress_start",
+        "progress_advance",
+    ]
+    assert records[1]["agent"] == {"done": True}
+    assert records[1]["current"] == 1

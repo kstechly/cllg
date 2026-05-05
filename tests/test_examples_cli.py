@@ -167,8 +167,12 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     assert payload["ok"] is True
     assert payload["steps"] == 2
     assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
-    assert [record["kind"] for record in records] == ["progress", "print"]
-    assert records[0]["agent"]["event"] == "progress_start"
+    assert [record["kind"] for record in records] == [
+        "progress_start",
+        "progress_advance",
+        "progress_advance",
+        "print",
+    ]
 
 
 def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
@@ -191,8 +195,13 @@ def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
     assert payload["ok"] is True
     assert payload["epochs"] == 2
     assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
-    assert [record["kind"] for record in records] == ["progress", "print"]
-    assert records[0]["agent"]["event"] == "progress_start"
+    assert [record["kind"] for record in records] == [
+        "progress_start",
+        "progress_message",
+        "progress_advance",
+        "progress_advance",
+        "print",
+    ]
 
 
 def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
@@ -212,7 +221,8 @@ def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
     assert payload["prints"]["count_before_final_print"] == len(
         payload["prints"]["kinds_before_final_print"]
     )
-    assert "progress" in payload["prints"]["kinds_before_final_print"]
+    assert "progress_start" in payload["prints"]["kinds_before_final_print"]
+    assert "progress_advance" in payload["prints"]["kinds_before_final_print"]
     assert "print" in [record["kind"] for record in records]
 
 

@@ -171,15 +171,54 @@ class LogSession(AbstractContextManager["LogSession"]):
         _append_print_record(
             self.path,
             {
-                "kind": "progress",
+                "kind": "progress_start",
                 "timestamp": self.clock().isoformat(),
                 "human": title,
-                "agent": {
-                    "event": "progress_start",
-                    "title": title,
-                    "total": total,
-                    "message": "progress is available in the log artifacts",
-                },
+                "agent": {},
+                "title": title,
+                "total": total,
+            },
+        )
+
+    def _record_progress_message(
+        self,
+        *,
+        human: str,
+        agent: dict[str, Any],
+        current: int,
+        total: int | None,
+    ) -> None:
+        _append_print_record(
+            self.path,
+            {
+                "kind": "progress_message",
+                "timestamp": self.clock().isoformat(),
+                "human": human,
+                "agent": agent,
+                "current": current,
+                "total": total,
+            },
+        )
+
+    def _record_progress_advance(
+        self,
+        *,
+        human: str,
+        agent: dict[str, Any],
+        current: int,
+        total: int | None,
+        advance: int,
+    ) -> None:
+        _append_print_record(
+            self.path,
+            {
+                "kind": "progress_advance",
+                "timestamp": self.clock().isoformat(),
+                "human": human,
+                "agent": agent,
+                "current": current,
+                "total": total,
+                "advance": advance,
             },
         )
 
@@ -297,7 +336,14 @@ class ProgressTask:
         human: str = "",
         agent: dict[str, Any] | None = None,
     ) -> None:
-        _validate_agent_payload(agent or {})
+        agent_payload = _validate_agent_payload(agent or {})
+        if self.session is not None:
+            self.session._record_progress_message(
+                human=human,
+                agent=agent_payload,
+                current=self._current,
+                total=self.total,
+            )
         self.display.message(human)
 
     def update(
@@ -307,8 +353,16 @@ class ProgressTask:
         human: str = "",
         agent: dict[str, Any] | None = None,
     ) -> None:
-        _validate_agent_payload(agent or {})
+        agent_payload = _validate_agent_payload(agent or {})
         self._current += advance
+        if self.session is not None:
+            self.session._record_progress_advance(
+                human=human,
+                agent=agent_payload,
+                current=self._current,
+                total=self.total,
+                advance=advance,
+            )
         self.display.update(advance=advance, text=human)
 
 

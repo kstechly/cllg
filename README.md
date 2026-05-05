@@ -21,8 +21,9 @@ the process working directory.
 - `command.json`: argv, derived command name, cwd, `started_at`, `ended_at`
   (null until the session closes cleanly), exception metadata, Python/platform/
   host metadata, allowlisted environment metadata, and git state.
-- `prints.jsonl`: structured records for `cllg.print(...)` calls plus a single
-  progress marker when `progress(...)` opens.
+- `prints.jsonl`: structured records for `cllg.print(...)` calls and for every
+  `progress(...)` lifecycle event — `progress_start`, `progress_message`, and
+  `progress_advance`.
 - `stdout.out`: stdout bytes emitted inside the context.
 - `stderr.err`: stderr bytes emitted inside the context.
 
@@ -82,11 +83,13 @@ with cllg.progress("training", total=epochs) as task:
         )
 ```
 
-In human TTY mode, progress uses `alive-progress`. In `--json` mode, progress
-does not stream every update to stdout. Instead, opening a progress context
-appends one `kind: "progress"` marker to `prints.jsonl` with the title and total
-so machine consumers know to inspect the log artifacts if they need progress
-detail.
+In human TTY mode, progress uses `alive-progress`. Progress is always logged to
+`prints.jsonl`, regardless of `--json` mode: opening a progress context appends
+a `kind: "progress_start"` record with `title` and `total`, then each
+`task.message(...)` and `task.update(...)` appends a `kind: "progress_message"`
+or `kind: "progress_advance"` record carrying the user's `agent` payload plus
+`current` / `total` counters (and `advance` on advances). In `--json` mode,
+progress does not stream to stdout — agents tail `prints.jsonl` for updates.
 
 ## Migrating From Print
 
