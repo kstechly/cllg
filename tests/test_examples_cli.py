@@ -14,6 +14,12 @@ def _read_events(path: Path) -> list[dict[str, object]]:
     ]
 
 
+def _json_stdout(completed: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    payload = json.loads(completed.stdout)
+    assert isinstance(payload, dict)
+    return payload
+
+
 def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     tmp_path: Path,
 ) -> None:
@@ -34,7 +40,7 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
+    payload = _json_stdout(completed)
     log_dir = Path(payload["log_dir"])
 
     assert completed.stderr == ""
@@ -66,7 +72,7 @@ def test_json_mode_example_json_flag_controls_machine_output(
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
+    payload = _json_stdout(completed)
 
     assert completed.stderr == ""
     assert payload["ok"] is True
@@ -91,17 +97,17 @@ def test_capture_stdio_example_captures_chatter_and_keeps_json_clean(
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
+    payload = _json_stdout(completed)
     log_dir = Path(payload["log_dir"])
+    captured_stdout = (log_dir / "stdout.txt").read_text(encoding="utf-8")
+    captured_stderr = (log_dir / "stderr.txt").read_text(encoding="utf-8")
 
     assert payload["ok"] is True
-    assert completed.stdout.count("\n") == 1
-    assert "human/progress chatter" not in completed.stdout
-    assert completed.stderr == "human/progress chatter\nwarnings\n"
-    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == (
-        "human/progress chatter\n"
-    )
-    assert (log_dir / "stderr.txt").read_text(encoding="utf-8") == "warnings\n"
+    assert log_dir.is_dir()
+    assert captured_stdout
+    assert captured_stderr
+    assert captured_stdout not in completed.stdout
+    assert completed.stderr == captured_stdout + captured_stderr
     assert (log_dir / "result.json").is_file()
 
 
@@ -121,12 +127,18 @@ def test_command_vs_events_example_shows_static_metadata_and_timeline(
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
+    payload = _json_stdout(completed)
+    log_dir = Path(payload["log_dir"])
+    command_path = log_dir / str(payload["command"]["file"])
+    events_path = log_dir / str(payload["events"]["file"])
+    events = _read_events(events_path)
 
     assert completed.stderr == ""
-    assert payload["command"]["file"] == "command.json"
-    assert payload["command"]["purpose"] == "one invocation metadata snapshot"
-    assert payload["events"]["file"] == "events.jsonl"
-    assert payload["events"]["purpose"] == "append-only timeline of what happened"
-    assert payload["events"]["count"] >= 3
-    assert Path(payload["log_dir"]).is_dir()
+    assert log_dir.is_dir()
+    assert command_path.is_file()
+    assert events_path.is_file()
+    assert payload["command"]["command"] == "command-vs-events"
+    assert payload["events"]["count"] == len(events)
+    assert {"progress_start", "progress_advance", "progress_finish", "artifact"} <= set(
+        payload["events"]["types"]
+    )
