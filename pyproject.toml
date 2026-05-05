@@ -1,14 +1,39 @@
 [project]
 name = "cllg"
 version = "0.1.0"
+description = "Opinionated persistent debug logging and structured print replacement for Python CLI commands."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "kstechly", email = "kayastechly@gmail.com" },
+]
+keywords = ["logging", "cli", "debugging", "print", "json", "progress", "agent"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Logging",
+  "Typing :: Typed",
+]
 dependencies = [
   "alive-progress>=3.3",
   "wurlitzer>=3.1.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kstechly/cllg"
+Repository = "https://github.com/kstechly/cllg"
+Issues = "https://github.com/kstechly/cllg/issues"
+
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
