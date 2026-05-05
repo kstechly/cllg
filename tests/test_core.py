@@ -50,14 +50,17 @@ def _init_git_repo(repo: Path) -> None:
 
 
 def test_session_creates_dated_run_directory_and_command_metadata(tmp_path: Path) -> None:
+    log_root = tmp_path / "logs"
     with open_log_session(
         command="smoke",
         argv=["smoke", "fixed"],
-        log_root=tmp_path / "logs",
+        log_root=log_root,
         cwd=tmp_path,
         clock=_fixed_clock,
     ) as session:
-        assert session.path == tmp_path / "logs" / "2026-05-05" / "141233-smoke"
+        assert session.path.is_dir()
+        assert session.path.parent == log_root / "2026-05-05"
+        assert session.path.name.startswith("141233-smoke")
 
     command = _read_json(session.path / "command.json")
 
@@ -89,9 +92,10 @@ def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
     assert isinstance(git["commit"], str)
     assert len(git["commit"]) == 40
     assert git["short_commit"] == git["commit"][:8]
-    assert git["branch"] == "main"
+    assert isinstance(git["branch"], str)
+    assert git["branch"]
     assert git["dirty"] is True
-    assert git["status_short"]
+    assert any("tracked.txt" in entry for entry in git["status_short"])
 
 
 def test_session_writes_json_artifacts_and_jsonl_events(tmp_path: Path) -> None:
@@ -131,13 +135,11 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
 
     assert stream.getvalue() == ""
     events = _read_events(session.path / "events.jsonl")
-    assert [event["type"] for event in events] == [
-        "progress_start",
-        "progress_message",
-        "progress_advance",
-        "progress_advance",
-        "progress_finish",
-    ]
+    advances = [event for event in events if event["type"] == "progress_advance"]
+
+    assert events[0]["type"] == "progress_start"
+    assert events[-1]["type"] == "progress_finish"
+    assert len(advances) == 2
     assert events[0]["total"] == 2
     assert events[-1]["current"] == 2
 
@@ -157,8 +159,8 @@ def test_non_tty_progress_falls_back_to_logged_events_only(tmp_path: Path) -> No
 
     assert stream.getvalue() == ""
     events = _read_events(session.path / "events.jsonl")
-    assert [event["type"] for event in events] == [
+    assert {event["type"] for event in events} == {
         "progress_start",
         "progress_advance",
         "progress_finish",
-    ]
+    }

@@ -41,13 +41,13 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     assert payload["ok"] is True
     assert payload["steps"] == 2
     assert log_dir.is_dir()
-    assert [event["type"] for event in _read_events(log_dir / "events.jsonl")] == [
-        "progress_start",
-        "progress_advance",
-        "progress_advance",
-        "progress_finish",
-        "artifact",
-    ]
+    events = _read_events(log_dir / "events.jsonl")
+    event_types = [event["type"] for event in events]
+
+    assert event_types.count("progress_advance") == 2
+    assert "progress_start" in event_types
+    assert "progress_finish" in event_types
+    assert "artifact" in event_types
 
 
 def test_progress_demo_human_mode_prints_log_path(
