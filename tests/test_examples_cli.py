@@ -261,7 +261,12 @@ with cllg():
 """,
     )
     log_dirs = sorted(path for path in (tmp_path / "logs").glob("*/*") if path.is_dir())
-    outer, inner = log_dirs
+    outer = next(
+        path
+        for path in log_dirs
+        if (path / "stdout.txt").read_bytes() == completed.stdout
+    )
+    inner = next(path for path in log_dirs if path != outer)
 
     assert completed.stdout == b"outer before\ninner\nouter after\n"
     assert (outer / "stdout.txt").read_bytes() == completed.stdout

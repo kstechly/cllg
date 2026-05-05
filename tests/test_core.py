@@ -44,6 +44,16 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
+def _git_output(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def _init_git_repo(repo: Path) -> None:
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "cllg@example.invalid")
@@ -175,12 +185,12 @@ def test_cllg_records_git_commit_and_dirty_state(
     git = command["git"]
 
     assert git["present"] is True
-    assert git["head"]["kind"] == "commit"
-    assert isinstance(git["head"]["commit"], str)
-    assert len(git["head"]["commit"]) == 40
-    assert git["head"]["short_commit"] == git["head"]["commit"][:8]
-    assert isinstance(git["head"]["branch"], str)
-    assert git["head"]["branch"]
+    assert git["head"] == {
+        "kind": "commit",
+        "commit": _git_output(repo, "rev-parse", "HEAD"),
+        "short_commit": _git_output(repo, "rev-parse", "--short=8", "HEAD"),
+        "branch": "main",
+    }
     assert git["dirty"] is True
     assert any("tracked.txt" in entry for entry in git["status_short"])
 
@@ -341,7 +351,7 @@ def test_output_works_without_active_cllg_context(
     assert forwarded_stdout.getvalue() == "outside\n"
 
 
-def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
+def test_cllg_forwards_stdout_and_stderr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -349,7 +359,7 @@ def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
 
-    with cllg() as session:
+    with cllg():
         print("stdout print")
         sys.stdout.write("stdout write\n")
         print("stderr print", file=sys.stderr)
@@ -400,7 +410,7 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
     logger.propagate = False
     logger.setLevel(logging.INFO)
 
-    with cllg() as session:
+    with cllg():
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         logger.addHandler(handler)
