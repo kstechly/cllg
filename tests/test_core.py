@@ -355,25 +355,6 @@ def test_nested_print_records_go_to_the_active_session(
     assert [record["agent"] for record in inner_outputs] == [{"scope": "inner"}]
 
 
-def test_session_print_method_records_to_prints_jsonl(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
-
-    with cllg() as session:
-        session.print(human="processed 3 items", agent={"ok": True, "items": 3})
-
-    captured = capfd.readouterr()
-    assert captured.out == "processed 3 items\n"
-    records = _read_prints(session.path / "prints.jsonl")
-    assert len(records) == 1
-    assert records[0]["human"] == "processed 3 items"
-    assert records[0]["agent"] == {"ok": True, "items": 3}
-
-
 def test_print_prints_agent_json_in_json_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

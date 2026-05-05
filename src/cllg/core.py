@@ -156,9 +156,6 @@ class LogSession(AbstractContextManager["LogSession"]):
             self._restore_stdio()
         return None
 
-    def print(self, *, human: str, agent: dict[str, Any]) -> None:
-        _print_with_session(human=human, agent=agent, session=self)
-
     def _record_print(self, *, human: str, agent: dict[str, Any]) -> None:
         _append_print_record(
             self.path,
