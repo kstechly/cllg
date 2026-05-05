@@ -30,6 +30,7 @@ def cllg() -> LogSession:
     command = _command_from_argv(argv)
     cwd = Path.cwd().resolve()
     repo_root = _repo_root(cwd)
+    git_metadata = _git_metadata(cwd, repo_root=repo_root)
     opened_at = _utc_now()
     path = _unique_run_path(
         repo_root / "logs" / opened_at.strftime("%Y-%m-%d"),
@@ -43,6 +44,7 @@ def cllg() -> LogSession:
             argv=argv,
             cwd=cwd,
             opened_at=opened_at,
+            git_metadata=git_metadata,
         ),
     )
     (path / "events.jsonl").touch()
@@ -372,6 +374,7 @@ def _command_metadata(
     argv: list[str],
     cwd: Path,
     opened_at: datetime,
+    git_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "command": command,
@@ -386,21 +389,17 @@ def _command_metadata(
         "platform": platform.platform(),
         "hostname": socket.gethostname(),
         "env": {},
-        "git": _git_metadata(cwd),
+        "git": git_metadata,
     }
 
 
-def _git_metadata(cwd: Path) -> dict[str, Any]:
-    repo_root = _git(cwd, "rev-parse", "--show-toplevel")
-    if repo_root is None:
-        return {"present": False}
-    commit = _git(cwd, "rev-parse", "HEAD")
-    branch = _git_branch(cwd, commit=commit)
-    status_short = (_git(cwd, "status", "--short") or "").splitlines()
+def _git_metadata(cwd: Path, *, repo_root: Path) -> dict[str, Any]:
+    status = _git(cwd, "status", "--porcelain=v2", "--branch") or ""
+    branch, commit, status_short = _parse_git_status(status)
     head = _git_head(commit=commit, branch=branch)
     return {
         "present": True,
-        "repo_root": repo_root,
+        "repo_root": str(repo_root),
         "head": head,
         "dirty": bool(status_short),
         "status_short": status_short,
@@ -414,6 +413,23 @@ def _repo_root(cwd: Path) -> Path:
     return Path(repo_root).resolve()
 
 
+def _parse_git_status(status: str) -> tuple[str | None, str | None, list[str]]:
+    branch: str | None = None
+    commit: str | None = None
+    status_short: list[str] = []
+    for line in status.splitlines():
+        if line.startswith("# branch.oid "):
+            raw_commit = line.removeprefix("# branch.oid ")
+            if raw_commit != "(initial)":
+                commit = raw_commit
+        elif line.startswith("# branch.head "):
+            raw_branch = line.removeprefix("# branch.head ")
+            branch = None if raw_branch == "(detached)" else raw_branch
+        elif not line.startswith("#"):
+            status_short.append(line)
+    return branch, commit, status_short
+
+
 def _git_head(*, commit: str | None, branch: str | None) -> dict[str, Any]:
     if commit is None:
         return {"kind": "unborn", "branch": branch or "HEAD"}
@@ -423,12 +439,6 @@ def _git_head(*, commit: str | None, branch: str | None) -> dict[str, Any]:
         "short_commit": commit[:8],
         "branch": branch or "HEAD",
     }
-
-
-def _git_branch(cwd: Path, *, commit: str | None) -> str | None:
-    if commit is None:
-        return _git(cwd, "symbolic-ref", "--short", "HEAD")
-    return _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
 
 
 def _git(cwd: Path, *args: str) -> str | None:

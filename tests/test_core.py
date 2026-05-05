@@ -177,6 +177,36 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     assert any("untracked.txt" in entry for entry in git["status_short"])
 
 
+def test_cllg_collects_git_metadata_with_one_root_lookup_and_one_status_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "argv", ["game"])
+
+    calls: list[tuple[str, ...]] = []
+    real_run = subprocess.run
+
+    def spy_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        command = args[0]
+        if isinstance(command, list) and command and command[0] == "git":
+            calls.append(tuple(str(part) for part in command[1:]))
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr("cllg.core.subprocess.run", spy_run)
+
+    with cllg():
+        pass
+
+    assert calls == [
+        ("rev-parse", "--show-toplevel"),
+        ("status", "--porcelain=v2", "--branch"),
+    ]
+
+
 def test_cllg_logs_events(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
