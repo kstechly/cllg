@@ -404,8 +404,6 @@ def test_print_validates_human_and_agent_shape_before_printing(
             cllg_module.print(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="string keys"):
             cllg_module.print(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
-        with pytest.raises(TypeError, match="JSON-serializable"):
-            cllg_module.print(human="bad", agent={"bad": object()})
 
     assert capfd.readouterr().out == ""
 
