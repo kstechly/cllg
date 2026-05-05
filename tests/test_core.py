@@ -276,19 +276,16 @@ def test_current_session_is_context_local_and_restored_for_nested_sessions(
 def test_output_prints_human_text_and_records_event_inside_cllg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stdout = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
     with cllg() as session:
         output(human="processed 3 items", agent={"ok": True, "items": 3})
 
-    assert forwarded_stdout.getvalue() == "processed 3 items\n"
-    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == (
-        "processed 3 items\n"
-    )
+    captured = capfd.readouterr()
+    assert captured.out == "processed 3 items\n"
     events = _read_events(session.path / "events.jsonl")
     outputs = _events_of_type(events, "output")
     assert len(outputs) == 1
@@ -299,29 +296,25 @@ def test_output_prints_human_text_and_records_event_inside_cllg(
 def test_output_prints_agent_json_in_json_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stdout = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command", "--json"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
     with cllg() as session:
         output(human="processed 3 items", agent={"items": 3, "ok": True})
 
-    assert json.loads(forwarded_stdout.getvalue()) == {"items": 3, "ok": True}
-    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == (
-        forwarded_stdout.getvalue()
-    )
+    captured = capfd.readouterr()
+    assert json.loads(captured.out) == {"items": 3, "ok": True}
 
 
 def test_output_validates_human_and_agent_before_printing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stdout = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
     with cllg():
         with pytest.raises(TypeError, match="human"):
@@ -333,7 +326,7 @@ def test_output_validates_human_and_agent_before_printing(
         with pytest.raises(TypeError, match="JSON-serializable"):
             output(human="bad", agent={"bad": object()})
 
-    assert forwarded_stdout.getvalue() == ""
+    assert capfd.readouterr().out == ""
 
 
 def test_output_works_without_active_cllg_context(
@@ -351,13 +344,10 @@ def test_output_works_without_active_cllg_context(
 def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stdout = io.StringIO()
-    forwarded_stderr = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
-    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
 
     with cllg() as session:
         print("stdout print")
@@ -367,37 +357,31 @@ def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
 
     expected_stdout = "stdout print\nstdout write\n"
     expected_stderr = "stderr print\nstderr write\n"
-    assert forwarded_stdout.getvalue() == expected_stdout
-    assert forwarded_stderr.getvalue() == expected_stderr
-    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == expected_stdout
-    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == expected_stderr
+    captured = capfd.readouterr()
+    assert captured.out == expected_stdout
+    assert captured.err == expected_stderr
 
 
 def test_cllg_restores_streams_after_exception(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stdout = io.StringIO()
-    forwarded_stderr = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
-    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
 
     with pytest.raises(RuntimeError, match="boom"):
         with cllg() as session:
             print("captured before exception")
             raise RuntimeError("boom")
 
-    assert sys.stdout is forwarded_stdout
-    assert sys.stderr is forwarded_stderr
+    assert sys.stdout is original_stdout
+    assert sys.stderr is original_stderr
     print("outside capture")
 
-    assert forwarded_stdout.getvalue() == "captured before exception\noutside capture\n"
-    assert (
-        session.path / "stdout.txt"
-    ).read_text(encoding="utf-8") == "captured before exception\n"
-    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == ""
+    assert capfd.readouterr().out == "captured before exception\noutside capture\n"
     events = _read_events(session.path / "events.jsonl")
     exceptions = _events_of_type(events, "exception")
     assert len(exceptions) == 1
@@ -407,11 +391,10 @@ def test_cllg_restores_streams_after_exception(
 def test_cllg_captures_logging_handlers_bound_inside_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
-    forwarded_stderr = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
-    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
     logger = logging.getLogger("cllg.tests.capture")
     logger.handlers.clear()
     logger.propagate = False
@@ -428,8 +411,18 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
             handler.close()
 
     expected = "INFO:captured log\n"
-    assert forwarded_stderr.getvalue() == expected
-    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == expected
+    assert capfd.readouterr().err == expected
+
+
+def test_cllg_keeps_stdout_as_real_text_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["capture"])
+
+    with cllg():
+        assert isinstance(sys.stdout, io.TextIOBase)
 
 
 def test_progress_events_are_logged_without_terminal_output_in_json_mode(

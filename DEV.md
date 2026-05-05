@@ -25,26 +25,30 @@ flags are usually design backsliding.
 
 ## Capture Semantics
 
-Capture should be broad for normal Python code and honest about boundaries.
+Capture should be fd-level, broad for normal CLI code, and honest about
+boundaries. Use Wurlitzer for the fd/pipe/thread machinery instead of
+hand-rolling it.
 
 Expected to capture:
 
 - `print(...)` inside `cllg()`.
 - `sys.stdout.write(...)` and `sys.stderr.write(...)` inside `cllg()`.
+- `sys.stdout.buffer.write(...)` and `sys.stderr.buffer.write(...)` inside
+  `cllg()`.
 - Python logging handlers that write to stdout/stderr while `cllg()` is active.
+- subprocess output inherited on file descriptors 1 and 2.
 
 Not in scope:
 
-- subprocess output inherited directly from file descriptors 1 and 2.
 - logging handlers pointed at files, sockets, custom streams, or other explicit
   destinations.
-- pretending `_TeeTextIO` is a perfect replacement for every `TextIOBase`
-  implementation detail.
+- subprocesses explicitly redirected away from inherited stdout/stderr.
 
-If pre-existing `logging.StreamHandler`s point at the original stdout/stderr,
-the right direction is to retarget those handlers on `LogSession.__enter__` and
-restore them on `__exit__`. Do it by exact stream identity, remember what was
-changed, and do not touch file handlers or arbitrary streams. Do not add a knob.
+Do not replace `sys.stdout` or `sys.stderr` with duck-typed shims. They should
+remain normal text streams while `cllg()` is active.
+
+Nested sessions should preserve the command-run mental model: outer logs include
+inner output, and inner logs contain the inner slice.
 
 ## Environment Metadata
 

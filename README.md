@@ -11,7 +11,7 @@ with cllg():
 
 `cllg()` must run inside a git repository. It creates a timestamped run
 directory under the repository root's `logs/` directory, writes invocation
-metadata, and tees Python-level stdout/stderr into log files without changing
+metadata, and tees stdout/stderr into log files without changing
 what the command prints. Running from a subdirectory still writes to the repo
 root, not the process working directory.
 
@@ -19,11 +19,22 @@ root, not the process working directory.
 
 - `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, allowlisted environment metadata, and git state.
 - `events.jsonl`: structured debug timeline events.
-- `stdout.txt`: Python-level stdout emitted inside the context.
-- `stderr.txt`: Python-level stderr emitted inside the context.
+- `stdout.txt`: stdout bytes emitted inside the context.
+- `stderr.txt`: stderr bytes emitted inside the context.
 
-`cllg` captures Python `sys.stdout` and `sys.stderr`. Subprocess output inherited
-directly from file descriptors 1 and 2 is out of scope.
+`cllg` captures at the stdout/stderr file-descriptor level. That includes
+`print(...)`, `sys.stdout.write(...)`, `sys.stdout.buffer.write(...)`, Python
+logging handlers that write to stdout/stderr, and subprocess output inherited on
+file descriptors 1 and 2. Handlers or subprocesses pointed at explicit files,
+sockets, pipes, or custom streams are outside the capture boundary.
+
+Nested sessions are allowed. The outer session log includes inner session
+output, because the outer session represents the whole command run; the inner
+session log contains its own slice.
+
+`stdout.txt` and `stderr.txt` preserve output bytes. They are named `.txt`
+because normal CLI output is text, but invalid UTF-8 bytes are not rewritten or
+dropped.
 
 `command.json` does not dump the full process environment. Its `env` field is
 self-describing:
@@ -204,9 +215,10 @@ def main() -> int:
     return 0
 ```
 
-That immediately tees normal Python-level `print(...)`, `sys.stdout.write(...)`,
-`sys.stderr.write(...)`, and logging handlers bound inside the context into
-`stdout.txt` and `stderr.txt` while preserving normal terminal output.
+That immediately tees normal CLI output into `stdout.txt` and `stderr.txt` while
+preserving normal terminal output. This includes Python text writes, Python
+buffer writes, stdout/stderr logging handlers, and subprocess output inherited
+on standard file descriptors.
 
 Then replace result-producing prints with `output(...)`:
 

@@ -12,8 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from collections.abc import Callable, Iterable, Iterator
-from typing import Any, Protocol, TextIO
+from collections.abc import Callable, Iterator
+from typing import Any, BinaryIO, Protocol, TextIO
+
+from wurlitzer import pipes
 
 Clock = Callable[[], datetime]
 _CURRENT_SESSION: ContextVar[LogSession | None] = ContextVar(
@@ -99,21 +101,32 @@ def cllg() -> LogSession:
 class LogSession(AbstractContextManager["LogSession"]):
     path: Path
     clock: Clock = _utc_now
-    _original_stdout: TextIO | None = None
-    _original_stderr: TextIO | None = None
-    _stdout_file: TextIO | None = None
-    _stderr_file: TextIO | None = None
+    _stdio_capture: AbstractContextManager[Any] | None = None
+    _stdout_echo_fd: int | None = None
+    _stderr_echo_fd: int | None = None
+    _stdout_file: BinaryIO | None = None
+    _stderr_file: BinaryIO | None = None
     _context_token: Token[LogSession | None] | None = None
 
     def __enter__(self) -> LogSession:
         self._context_token = _CURRENT_SESSION.set(self)
-        self._original_stdout = sys.stdout
-        self._original_stderr = sys.stderr
-        self._stdout_file = (self.path / "stdout.txt").open("a", encoding="utf-8")
-        self._stderr_file = (self.path / "stderr.txt").open("a", encoding="utf-8")
-        sys.stdout = _TeeTextIO(self._original_stdout, self._stdout_file)  # type: ignore[assignment]
-        sys.stderr = _TeeTextIO(self._original_stderr, self._stderr_file)  # type: ignore[assignment]
-        return self
+        try:
+            _flush_stdio()
+            self._stdout_echo_fd = os.dup(1)
+            self._stderr_echo_fd = os.dup(2)
+            self._stdout_file = (self.path / "stdout.txt").open("ab")
+            self._stderr_file = (self.path / "stderr.txt").open("ab")
+            stdio_capture = pipes(
+                stdout=_FdTee(self._stdout_echo_fd, self._stdout_file),
+                stderr=_FdTee(self._stderr_echo_fd, self._stderr_file),
+                encoding=None,
+            )
+            stdio_capture.__enter__()
+            self._stdio_capture = stdio_capture
+            return self
+        except Exception:
+            self._restore_stdio()
+            raise
 
     def __exit__(
         self,
@@ -151,58 +164,48 @@ class LogSession(AbstractContextManager["LogSession"]):
             file.write(json.dumps(event, sort_keys=True) + "\n")
 
     def _restore_stdio(self) -> None:
-        if self._original_stdout is not None:
-            sys.stdout = self._original_stdout
-        if self._original_stderr is not None:
-            sys.stderr = self._original_stderr
-        if self._stdout_file is not None:
-            self._stdout_file.close()
-        if self._stderr_file is not None:
-            self._stderr_file.close()
-        if self._context_token is not None:
-            _CURRENT_SESSION.reset(self._context_token)
-            self._context_token = None
+        try:
+            _flush_stdio()
+            if self._stdio_capture is not None:
+                self._stdio_capture.__exit__(None, None, None)
+                self._stdio_capture = None
+        finally:
+            if self._stdout_file is not None:
+                self._stdout_file.close()
+                self._stdout_file = None
+            if self._stderr_file is not None:
+                self._stderr_file.close()
+                self._stderr_file = None
+            if self._stdout_echo_fd is not None:
+                os.close(self._stdout_echo_fd)
+                self._stdout_echo_fd = None
+            if self._stderr_echo_fd is not None:
+                os.close(self._stderr_echo_fd)
+                self._stderr_echo_fd = None
+            if self._context_token is not None:
+                _CURRENT_SESSION.reset(self._context_token)
+                self._context_token = None
 
 
-class _TeeTextIO:
-    def __init__(self, stream: TextIO, artifact: TextIO) -> None:
-        self._stream = stream
+class _FdTee:
+    def __init__(self, echo_fd: int, artifact: BinaryIO) -> None:
+        self._echo_fd = echo_fd
         self._artifact = artifact
 
-    @property
-    def encoding(self) -> str | None:
-        return getattr(self._stream, "encoding", None)
-
-    @property
-    def errors(self) -> str | None:
-        return getattr(self._stream, "errors", None)
-
-    @property
-    def newlines(self) -> Any:
-        return getattr(self._stream, "newlines", None)
-
-    @property
-    def closed(self) -> bool:
-        return self._stream.closed
-
-    def write(self, text: str) -> int:
-        written = self._stream.write(text)
-        self._artifact.write(text)
-        return written
-
-    def writelines(self, lines: Iterable[str]) -> None:
-        for line in lines:
-            self.write(line)
+    def write(self, data: bytes | str) -> int:
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        os.write(self._echo_fd, data)
+        self._artifact.write(data)
+        return len(data)
 
     def flush(self) -> None:
-        self._stream.flush()
         self._artifact.flush()
 
-    def isatty(self) -> bool:
-        return self._stream.isatty()
 
-    def fileno(self) -> int:
-        return self._stream.fileno()
+def _flush_stdio() -> None:
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 def current_session() -> LogSession | None:

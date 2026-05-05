@@ -38,6 +38,20 @@ def _run_example(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]
     )
 
 
+def _run_script(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]:
+    # Wurlitzer captures process fds; pytest's own fd capture is a bad harness
+    # for asserting log files. Run fd-capture cases in a child process instead.
+    _init_git_repo(tmp_path)
+    script = tmp_path / "script.py"
+    script.write_text(source, encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
@@ -157,3 +171,98 @@ def test_command_vs_events_example_shows_static_metadata_and_timeline(
         payload["events"]["types"]
     )
     assert _events_of_type(events, "output")
+
+
+def test_fd_capture_logs_buffer_logging_and_subprocess_output(
+    tmp_path: Path,
+) -> None:
+    completed = _run_script(
+        tmp_path,
+        """
+from __future__ import annotations
+
+import logging
+import subprocess
+import sys
+
+from cllg import cllg
+
+logger = logging.getLogger("example.preexisting")
+logger.handlers.clear()
+logger.propagate = False
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("PRE:%(message)s"))
+logger.addHandler(handler)
+
+with cllg():
+    print("print stdout")
+    sys.stdout.flush()
+    sys.stdout.buffer.write(b"buffer stdout\\n")
+    sys.stdout.flush()
+    print("print stderr", file=sys.stderr)
+    logger.info("preexisting logging")
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('child stdout'); print('child stderr', file=sys.stderr)",
+        ],
+        check=True,
+    )
+""",
+    )
+    log_dir = _only_log_dir(tmp_path)
+
+    assert completed.stdout == b"print stdout\nbuffer stdout\nchild stdout\n"
+    assert completed.stderr == b"print stderr\nPRE:preexisting logging\nchild stderr\n"
+    assert (log_dir / "stdout.txt").read_bytes() == completed.stdout
+    assert (log_dir / "stderr.txt").read_bytes() == completed.stderr
+
+
+def test_fd_capture_preserves_invalid_stdout_bytes(
+    tmp_path: Path,
+) -> None:
+    completed = _run_script(
+        tmp_path,
+        """
+from __future__ import annotations
+
+import sys
+
+from cllg import cllg
+
+with cllg():
+    sys.stdout.buffer.write(b"bad:\\xff\\n")
+    sys.stdout.flush()
+""",
+    )
+    log_dir = _only_log_dir(tmp_path)
+
+    assert completed.stdout == b"bad:\xff\n"
+    assert (log_dir / "stdout.txt").read_bytes() == b"bad:\xff\n"
+
+
+def test_nested_cllg_logs_inner_output_to_inner_and_outer_sessions(
+    tmp_path: Path,
+) -> None:
+    completed = _run_script(
+        tmp_path,
+        """
+from __future__ import annotations
+
+from cllg import cllg
+
+with cllg():
+    print("outer before")
+    with cllg():
+        print("inner")
+    print("outer after")
+""",
+    )
+    log_dirs = sorted(path for path in (tmp_path / "logs").glob("*/*") if path.is_dir())
+    outer, inner = log_dirs
+
+    assert completed.stdout == b"outer before\ninner\nouter after\n"
+    assert (outer / "stdout.txt").read_bytes() == completed.stdout
+    assert (inner / "stdout.txt").read_bytes() == b"inner\n"
