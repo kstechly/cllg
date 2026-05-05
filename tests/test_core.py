@@ -67,8 +67,7 @@ def test_session_creates_dated_run_directory_and_command_metadata(tmp_path: Path
     assert command["command"] == "smoke"
     assert command["argv"] == ["smoke", "fixed"]
     assert command["cwd"] == str(tmp_path)
-    assert command["git"]["commit"] is None
-    assert command["git"]["dirty"] is False
+    assert command["git"] == {"present": False}
 
 
 def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
@@ -89,6 +88,7 @@ def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
     command = _read_json(session.path / "command.json")
     git = command["git"]
 
+    assert git["present"] is True
     assert isinstance(git["commit"], str)
     assert len(git["commit"]) == 40
     assert git["short_commit"] == git["commit"][:8]
