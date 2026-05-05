@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from cllg import cllg, output, progress
+from cllg.core import _unique_run_path
 
 
 class FakeTty(io.StringIO):
@@ -113,6 +114,21 @@ def test_cllg_creates_run_directory_and_command_metadata(
     assert (session.path / "events.jsonl").is_file()
     assert (session.path / "stdout.out").is_file()
     assert (session.path / "stderr.err").is_file()
+
+
+def test_unique_run_path_adds_entropy_before_directory_exists(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "logs"
+
+    first = _unique_run_path(parent, "141233-smoke")
+    second = _unique_run_path(parent, "141233-smoke")
+
+    assert first != second
+    assert first.is_dir()
+    assert second.is_dir()
+    assert first.name.startswith("141233-smoke")
+    assert second.name.startswith("141233-smoke")
 
 
 def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(

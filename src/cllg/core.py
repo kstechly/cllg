@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import secrets
 import socket
 import subprocess
 import sys
@@ -78,7 +79,6 @@ def cllg() -> LogSession:
         repo_root / "logs" / opened_at.strftime("%Y-%m-%d"),
         f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
     )
-    path.mkdir(parents=True)
     _write_json(
         path / "command.json",
         _command_metadata(
@@ -497,15 +497,13 @@ def _git(cwd: Path, *args: str) -> str | None:
 
 def _unique_run_path(parent: Path, stem: str) -> Path:
     parent.mkdir(parents=True, exist_ok=True)
-    candidate = parent / stem
-    if not candidate.exists():
-        return candidate
-    index = 2
     while True:
-        candidate = parent / f"{stem}-{index}"
-        if not candidate.exists():
+        candidate = parent / f"{stem}-{secrets.token_hex(4)}"
+        try:
+            candidate.mkdir()
             return candidate
-        index += 1
+        except FileExistsError:
+            continue
 
 
 def _slug(raw: str) -> str:
