@@ -32,7 +32,8 @@ garbage.
 
 ## Output
 
-Use `output(human=..., agent=...)` instead of `print(...)`.
+Use `output(human=..., agent=...)` instead of `print(...)` for command results
+that need to be useful to both people and agents.
 
 ```python
 from cllg import output
@@ -45,6 +46,10 @@ output(
 
 Human mode prints the human string. `--json` mode prints the agent object as
 stable JSON. Inside `cllg()`, output calls are also recorded in `events.jsonl`.
+
+`human` must be a string. `agent` must be a JSON-serializable object with string
+keys. `cllg` validates before printing, so bad agent payloads fail before
+polluting stdout with broken machine output.
 
 ## Progress
 
@@ -63,8 +68,144 @@ with progress("training", total=epochs) as task:
         )
 ```
 
+The important shape is that only the CLI boundary needs `cllg()`. The training
+loop can live in normal imported code and still use `progress(...)` directly:
+
+```python
+from cllg import cllg, output, progress
+
+
+def main() -> int:
+    with cllg():
+        loss = train_model(epochs=10)
+        output(
+            human=f"training complete loss={loss:.3f}",
+            agent={"ok": True, "loss": loss},
+        )
+    return 0
+
+
+def train_model(*, epochs: int) -> float:
+    loss = 1.0
+    with progress("training", total=epochs) as task:
+        task.message(
+            human="initialized training loop",
+            agent={"event": "training_initialized", "epochs": epochs},
+        )
+        for epoch in range(1, epochs + 1):
+            loss = train_epoch(epoch, loss)
+            task.update(
+                human=f"epoch {epoch}/{epochs} loss={loss:.3f}",
+                agent={"event": "epoch", "epoch": epoch, "loss": loss},
+            )
+    return loss
+```
+
+See `examples/training_loop.py` for a runnable version.
+
 In `--json` mode progress is logged but not painted to the terminal. In human
 TTY mode it uses `alive-progress`.
+
+`progress(...)` also works outside `cllg()`. In that case it can still paint
+human progress when stderr is a TTY, but it has no active session, so it does
+not append progress events to `events.jsonl`.
+
+### Progress API
+
+`progress(title, total=None, stream=None)` returns a context manager. `title`
+names the progress task. `total` is the expected number of updates, or `None`
+for open-ended work. `stream` defaults to `sys.stderr`.
+
+Inside the context, `task.message(...)` records or displays a status message
+without advancing the counter:
+
+```python
+task.message(
+    human="loaded dataset",
+    agent={"event": "dataset_loaded", "rows": 1200},
+)
+```
+
+`task.update(...)` advances the counter. `advance` defaults to `1`.
+
+```python
+task.update(
+    human="epoch 3/10 loss=0.410",
+    agent={"event": "epoch", "epoch": 3, "epochs": 10, "loss": 0.410},
+)
+```
+
+Both methods validate `agent` as a JSON-serializable object with string keys.
+Use `message(...)` for a checkpoint that does not represent completed work; use
+`update(...)` when the task made measurable progress.
+
+### Progress Events
+
+When a progress task runs inside `cllg()`, `events.jsonl` receives these event
+types:
+
+- `progress_start`: emitted when the progress context opens.
+- `progress_message`: emitted by `task.message(...)`.
+- `progress_advance`: emitted by `task.update(...)`.
+- `progress_finish`: emitted when the progress context exits.
+
+All progress events include:
+
+- `type`: one of the event types above.
+- `timestamp`: ISO-8601 UTC timestamp.
+- `text`: the human text for the event.
+- `data`: the agent payload, or `{}`.
+
+Progress events also include task counters:
+
+- `current`: current completed count.
+- `total`: configured total, or `null`.
+- `advance`: only on `progress_advance`, the amount added by that update.
+
+Example `progress_advance` line:
+
+```json
+{"advance": 1, "current": 3, "data": {"epoch": 3, "event": "epoch", "loss": 0.41}, "text": "epoch 3/10 loss=0.410", "timestamp": "2026-05-05T14:12:33+00:00", "total": 10, "type": "progress_advance"}
+```
+
+## Migrating From Print
+
+For a CLI command, start by wrapping the command body:
+
+```python
+from cllg import cllg
+
+
+def main() -> int:
+    with cllg():
+        run_command()
+    return 0
+```
+
+That immediately tees normal Python-level `print(...)`, `sys.stdout.write(...)`,
+`sys.stderr.write(...)`, and logging handlers bound inside the context into
+`stdout.txt` and `stderr.txt` while preserving normal terminal output.
+
+Then replace result-producing prints with `output(...)`:
+
+```python
+# Before
+print(f"processed {count} items")
+
+# After
+output(
+    human=f"processed {count} items",
+    agent={"ok": True, "items": count},
+)
+```
+
+Use `progress(...)` for loops and long-running work, including code below the
+CLI boundary. Do not pass a `log` object through the call stack just to report
+progress.
+
+Raw prints are still captured inside `cllg()`, so migration can be incremental.
+The point of `output(...)` is not logging; it is keeping human output and
+machine-readable `--json` output under one validated API.
 
 ## Consumer Linting
 
@@ -93,6 +234,7 @@ the Ruff rule belongs in consumer repositories.
 ```bash
 uv run python examples/basic_session.py
 uv run python examples/progress_demo.py
+uv run python examples/training_loop.py --json | uv run python -m json.tool
 uv run python examples/command_vs_events.py
 uv run python examples/json_mode.py --json | uv run python -m json.tool
 uv run python examples/git_metadata.py

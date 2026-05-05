@@ -114,6 +114,30 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     assert _events_of_type(events, "progress_finish")
 
 
+def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
+    tmp_path: Path,
+) -> None:
+    completed = _run_example(
+        tmp_path,
+        "training_loop.py",
+        "--json",
+        "--epochs",
+        "2",
+        "--delay",
+        "0",
+    )
+    payload = _json_stdout(completed)
+    log_dir = _only_log_dir(tmp_path)
+    events = _read_events(log_dir / "events.jsonl")
+
+    assert completed.stderr == ""
+    assert payload["ok"] is True
+    assert payload["epochs"] == 2
+    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
+    assert _events_of_type(events, "progress_message")
+    assert len(_events_of_type(events, "progress_advance")) == 2
+
+
 def test_command_vs_events_example_shows_static_metadata_and_timeline(
     tmp_path: Path,
 ) -> None:
