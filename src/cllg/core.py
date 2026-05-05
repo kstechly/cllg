@@ -434,10 +434,6 @@ def _command_metadata(
 
 
 def _environment_metadata() -> dict[str, Any]:
-    # SPEC-AMBIGUITY: (2026-05-05T00:00:00-04:00 User asked for "do the allowlist, but make it obvious it's an allowlisted env not all env, include common cuda, torch , torchrun, whatever stuff in there" but this could mean
-    # 1. keep env as a flat dict and rely on docs to explain it is allowlisted
-    # 2. wrap values in an explicit metadata object that names the allowlist behavior
-    # Choice defaulted to: 2 because command.json should be self-describing without requiring the README.
     values = {
         name: os.environ[name]
         for name in _ENV_ALLOWLIST
