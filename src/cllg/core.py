@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,10 @@ from types import TracebackType
 from typing import Any, Callable, Iterable, Iterator, Protocol, TextIO
 
 Clock = Callable[[], datetime]
+_CURRENT_SESSION: ContextVar[LogSession | None] = ContextVar(
+    "cllg_current_session",
+    default=None,
+)
 
 
 def _utc_now() -> datetime:
@@ -54,8 +59,10 @@ class LogSession(AbstractContextManager["LogSession"]):
     _original_stderr: TextIO | None = None
     _stdout_file: TextIO | None = None
     _stderr_file: TextIO | None = None
+    _context_token: Token[LogSession | None] | None = None
 
     def __enter__(self) -> LogSession:
+        self._context_token = _CURRENT_SESSION.set(self)
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
         self._stdout_file = (self.path / "stdout.txt").open("a", encoding="utf-8")
@@ -108,6 +115,9 @@ class LogSession(AbstractContextManager["LogSession"]):
             self._stdout_file.close()
         if self._stderr_file is not None:
             self._stderr_file.close()
+        if self._context_token is not None:
+            _CURRENT_SESSION.reset(self._context_token)
+            self._context_token = None
 
 
 class _TeeTextIO:
@@ -151,35 +161,33 @@ class _TeeTextIO:
         return self._stream.fileno()
 
 
-def make_progress(
+def current_session() -> LogSession | None:
+    return _CURRENT_SESSION.get()
+
+
+def output(*, human: str, agent: dict[str, Any]) -> None:
+    _validate_output_payload(human=human, agent=agent)
+    text = _agent_text(agent) if _json_mode() else human
+    print(text)
+    session = current_session()
+    if session is not None:
+        session.event("output", text=human, data=agent)
+
+
+def progress(
+    title: str,
     *,
-    session: LogSession,
-    json_mode: bool,
+    total: int | None = None,
     stream: TextIO | None = None,
-) -> ProgressReporter:
-    return ProgressReporter(
-        session=session,
-        sink=_make_progress_sink(json_mode=json_mode, stream=stream or sys.stderr),
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class ProgressReporter:
-    session: LogSession
-    sink: ProgressSink
-
-    def task(self, title: str, *, total: int | None = None) -> AbstractContextManager[ProgressTask]:
-        return _progress_task(
-            session=self.session,
-            sink=self.sink,
-            title=title,
-            total=total,
-        )
+) -> AbstractContextManager[ProgressTask]:
+    session = current_session()
+    sink = _make_progress_sink(json_mode=_json_mode(), stream=stream or sys.stderr)
+    return _progress_task(session=session, sink=sink, title=title, total=total)
 
 
 @dataclass(slots=True)
 class ProgressTask:
-    session: LogSession
+    session: LogSession | None
     display: ProgressDisplay
     title: str
     total: int | None = None
@@ -189,45 +197,55 @@ class ProgressTask:
     def current(self) -> int:
         return self._current
 
-    def message(self, text: str, *, data: dict[str, Any] | None = None) -> None:
-        self.session.event(
-            "progress_message",
-            text=text,
-            data=data,
-            current=self._current,
-            total=self.total,
-        )
-        self.display.message(text)
+    def message(
+        self,
+        *,
+        human: str = "",
+        agent: dict[str, Any] | None = None,
+    ) -> None:
+        agent_payload = _validate_agent_payload(agent or {})
+        if self.session is not None:
+            self.session.event(
+                "progress_message",
+                text=human,
+                data=agent_payload,
+                current=self._current,
+                total=self.total,
+            )
+        self.display.message(human)
 
     def update(
         self,
         advance: int = 1,
         *,
-        text: str = "",
-        data: dict[str, Any] | None = None,
+        human: str = "",
+        agent: dict[str, Any] | None = None,
     ) -> None:
+        agent_payload = _validate_agent_payload(agent or {})
         self._current += advance
-        self.session.event(
-            "progress_advance",
-            text=text,
-            data=data,
-            current=self._current,
-            total=self.total,
-            advance=advance,
-        )
-        self.display.update(advance=advance, text=text)
+        if self.session is not None:
+            self.session.event(
+                "progress_advance",
+                text=human,
+                data=agent_payload,
+                current=self._current,
+                total=self.total,
+                advance=advance,
+            )
+        self.display.update(advance=advance, text=human)
 
 
 @contextmanager
 def _progress_task(
     *,
-    session: LogSession,
+    session: LogSession | None,
     sink: ProgressSink,
     title: str,
     total: int | None,
 ) -> Iterator[ProgressTask]:
     current = 0
-    session.event("progress_start", text=title, current=current, total=total)
+    if session is not None:
+        session.event("progress_start", text=title, current=current, total=total)
     with sink.task(title=title, total=total) as display:
         task = ProgressTask(
             session=session,
@@ -238,12 +256,13 @@ def _progress_task(
         try:
             yield task
         finally:
-            session.event(
-                "progress_finish",
-                text=title,
-                current=task.current,
-                total=total,
-            )
+            if session is not None:
+                session.event(
+                    "progress_finish",
+                    text=title,
+                    current=task.current,
+                    total=total,
+                )
 
 
 class ProgressDisplay(Protocol):
@@ -433,6 +452,42 @@ def _slug(raw: str) -> str:
     chars = [char.lower() if char.isalnum() else "-" for char in raw.strip()]
     slug = "-".join(part for part in "".join(chars).split("-") if part)
     return slug or "command"
+
+
+def _json_mode() -> bool:
+    return "--json" in sys.argv
+
+
+def _validate_output_payload(*, human: str, agent: dict[str, Any]) -> None:
+    if not isinstance(human, str):
+        raise TypeError("human output must be a string")
+    _validate_agent_payload(agent)
+
+
+def _validate_agent_payload(agent: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(agent, dict):
+        raise TypeError("agent output must be a JSON object")
+    _validate_string_keys(agent)
+    try:
+        json.dumps(agent, sort_keys=True)
+    except TypeError as exc:
+        raise TypeError("agent output must be JSON-serializable") from exc
+    return agent
+
+
+def _validate_string_keys(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            if not isinstance(key, str):
+                raise TypeError("agent output must use string keys")
+            _validate_string_keys(nested_value)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_string_keys(item)
+
+
+def _agent_text(agent: dict[str, Any]) -> str:
+    return json.dumps(agent, sort_keys=True)
 
 
 def _command_from_argv(argv: list[str]) -> str:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from cllg import cllg, make_progress
+from cllg import cllg, current_session, output, progress
 
 
 class FakeTty(io.StringIO):
@@ -148,6 +148,98 @@ def test_cllg_logs_events(
     assert messages[0]["data"] == {"replication": 0}
 
 
+def test_current_session_is_context_local_and_restored_for_nested_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["outer"])
+
+    assert current_session() is None
+    with cllg() as outer:
+        assert current_session() is outer
+        with cllg() as inner:
+            assert current_session() is inner
+        assert current_session() is outer
+
+    assert current_session() is None
+
+
+def test_output_prints_human_text_and_records_event_inside_cllg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["command"])
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+
+    with cllg() as session:
+        output(human="processed 3 items", agent={"ok": True, "items": 3})
+
+    assert forwarded_stdout.getvalue() == "processed 3 items\n"
+    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == (
+        "processed 3 items\n"
+    )
+    events = _read_events(session.path / "events.jsonl")
+    outputs = _events_of_type(events, "output")
+    assert len(outputs) == 1
+    assert outputs[0]["text"] == "processed 3 items"
+    assert outputs[0]["data"] == {"ok": True, "items": 3}
+
+
+def test_output_prints_agent_json_in_json_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["command", "--json"])
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+
+    with cllg() as session:
+        output(human="processed 3 items", agent={"items": 3, "ok": True})
+
+    assert json.loads(forwarded_stdout.getvalue()) == {"items": 3, "ok": True}
+    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == (
+        forwarded_stdout.getvalue()
+    )
+
+
+def test_output_validates_human_and_agent_before_printing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["command"])
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+
+    with cllg():
+        with pytest.raises(TypeError, match="human"):
+            output(human=object(), agent={"ok": True})  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="agent"):
+            output(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="string keys"):
+            output(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
+        with pytest.raises(TypeError, match="JSON-serializable"):
+            output(human="bad", agent={"bad": object()})
+
+    assert forwarded_stdout.getvalue() == ""
+
+
+def test_output_works_without_active_cllg_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    monkeypatch.setattr(sys, "argv", ["command"])
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+
+    output(human="outside", agent={"ok": True})
+
+    assert forwarded_stdout.getvalue() == "outside\n"
+
+
 def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -238,13 +330,12 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
 ) -> None:
     stream = FakeTty()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
+    monkeypatch.setattr(sys, "argv", ["smoke", "--json"])
     with cllg() as session:
-        progress = make_progress(session=session, json_mode=True, stream=stream)
-        with progress.task("smoke fixed limerick", total=2) as task:
-            task.message("loaded")
-            task.update(text="replication 1")
-            task.update(text="replication 2")
+        with progress("smoke fixed limerick", total=2, stream=stream) as task:
+            task.message(human="loaded", agent={"event": "loaded"})
+            task.update(human="replication 1", agent={"replication": 1})
+            task.update(human="replication 2", agent={"replication": 2})
 
     assert stream.getvalue() == ""
     events = _read_events(session.path / "events.jsonl")
@@ -257,6 +348,7 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
     assert len(finishes) == 1
     assert starts[0]["total"] == 2
     assert finishes[0]["current"] == 2
+    assert advances[0]["data"] == {"replication": 1}
 
 
 def test_non_tty_progress_falls_back_to_logged_events_only(
@@ -267,9 +359,8 @@ def test_non_tty_progress_falls_back_to_logged_events_only(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["batch"])
     with cllg() as session:
-        progress = make_progress(session=session, json_mode=False, stream=stream)
-        with progress.task("batch", total=1) as task:
-            task.update(text="done")
+        with progress("batch", total=1, stream=stream) as task:
+            task.update(human="done", agent={"done": True})
 
     assert stream.getvalue() == ""
     events = _read_events(session.path / "events.jsonl")

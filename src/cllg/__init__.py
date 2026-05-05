@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from cllg.core import LogSession, ProgressReporter, cllg, make_progress
+from cllg.core import LogSession, cllg, current_session, output, progress
 
 __all__ = [
     "LogSession",
-    "ProgressReporter",
     "cllg",
-    "make_progress",
+    "current_session",
+    "output",
+    "progress",
 ]

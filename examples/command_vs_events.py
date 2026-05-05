@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from cllg import cllg, make_progress
+from cllg import cllg, output, progress
 
 
 COMMAND_PURPOSE = "one invocation metadata snapshot"
@@ -21,17 +21,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     with cllg() as log:
         log.event("message", text="command.json already exists")
-        progress = make_progress(session=log, json_mode=args.json)
-        with progress.task("write timeline", total=1) as task:
-            task.update(text="events.jsonl is growing")
+        with progress("write timeline", total=1) as task:
+            task.update(
+                human="events.jsonl is growing",
+                agent={"event": "events_jsonl_growing"},
+            )
         payload = _payload(log.path)
-
-    if args.json:
-        print(json.dumps(payload, sort_keys=True))
-    else:
-        print(f"command.json: {COMMAND_PURPOSE}")
-        print(f"events.jsonl: {EVENTS_PURPOSE}")
-        print(f"events: {payload['events']['count']}")
+        output(human=_human_payload(payload), agent=payload)
     return 0
 
 
@@ -57,6 +53,18 @@ def _payload(log_dir: Path) -> dict[str, object]:
             "types": [event["type"] for event in events],
         },
     }
+
+
+def _human_payload(payload: dict[str, object]) -> str:
+    events = payload["events"]
+    assert isinstance(events, dict)
+    return "\n".join(
+        [
+            f"command.json: {COMMAND_PURPOSE}",
+            f"events.jsonl: {EVENTS_PURPOSE}",
+            f"events: {events['count']}",
+        ]
+    )
 
 
 if __name__ == "__main__":

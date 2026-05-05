@@ -108,7 +108,43 @@ def test_command_vs_events_example_shows_static_metadata_and_timeline(
     assert command_path.is_file()
     assert events_path.is_file()
     assert payload["command"]["command"] == "command_vs_events.py"
-    assert payload["events"]["count"] == len(events)
+    assert payload["events"]["count"] == len(events) - 1
     assert {"progress_start", "progress_advance", "progress_finish"} <= set(
         payload["events"]["types"]
     )
+    assert _events_of_type(events, "output")
+
+
+def test_print_linter_rejects_direct_print_in_source_file(tmp_path: Path) -> None:
+    bad_file = tmp_path / "bad_example.py"
+    bad_file.write_text("def main():\n    print('bad')\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "lint_cllg_prints.py"),
+            str(bad_file),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert str(bad_file) in completed.stdout
+
+
+def test_print_linter_allows_tests_and_cllg_internals() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "lint_cllg_prints.py"),
+            str(REPO_ROOT / "src" / "cllg"),
+            str(REPO_ROOT / "tests"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout == ""

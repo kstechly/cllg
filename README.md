@@ -1,22 +1,19 @@
 # cllg
 
-Opinionated persistent debug logging for Python CLI commands.
-
-`cllg` is meant to wrap otherwise normal CLI code:
+Opinionated persistent debug logging and dual-mode output for Python CLI commands.
 
 ```python
-from cllg import cllg
+from cllg import cllg, output
 
-with cllg() as log:
-    print("normal human output")
-    log.event("loaded")
+with cllg():
+    output(human="processed 3 items", agent={"ok": True, "items": 3})
 ```
 
-That creates a timestamped run directory under `logs/`, writes invocation
+`cllg()` creates a timestamped run directory under `logs/`, writes invocation
 metadata, and tees Python-level stdout/stderr into log files without changing
 what the command prints.
 
-## What gets logged
+## What Gets Logged
 
 - `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, and git state.
 - `events.jsonl`: structured debug timeline events.
@@ -26,21 +23,51 @@ what the command prints.
 `cllg` captures Python `sys.stdout` and `sys.stderr`. Subprocess output inherited
 directly from file descriptors 1 and 2 is out of scope.
 
-## Progress
+## Output
+
+Use `output(human=..., agent=...)` instead of `print(...)`.
 
 ```python
-from cllg import cllg, make_progress
+from cllg import output
 
-with cllg() as log:
-    progress = make_progress(session=log, json_mode=args.json)
-    with progress.task("work", total=items) as task:
-        for item in work:
-            process(item)
-            task.update()
+output(
+    human="epoch 3/10 loss=0.410",
+    agent={"event": "epoch", "epoch": 3, "epochs": 10, "loss": 0.410},
+)
 ```
 
-In JSON mode progress is logged but not painted to the terminal. In non-JSON TTY
-mode it uses `alive-progress`.
+Human mode prints the human string. `--json` mode prints the agent object as
+stable JSON. Inside `cllg()`, output calls are also recorded in `events.jsonl`.
+
+## Progress
+
+`progress(...)` uses the active `cllg()` session, so deep code does not need a
+`log` parameter.
+
+```python
+from cllg import progress
+
+with progress("training", total=epochs) as task:
+    for epoch in range(epochs):
+        loss = train_epoch(epoch)
+        task.update(
+            human=f"epoch {epoch + 1}/{epochs} loss={loss:.3f}",
+            agent={"epoch": epoch + 1, "epochs": epochs, "loss": loss},
+        )
+```
+
+In `--json` mode progress is logged but not painted to the terminal. In human
+TTY mode it uses `alive-progress`.
+
+## Linting
+
+Use the repository linter to keep raw `print(...)` out of examples and app code:
+
+```bash
+uv run python scripts/lint_cllg_prints.py
+```
+
+`print(...)` is allowed in `src/cllg/` internals and tests.
 
 ## Examples
 
