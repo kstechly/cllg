@@ -336,7 +336,7 @@ def test_output_prints_agent_json_in_json_mode(
     assert json.loads(captured.out) == {"items": 3, "ok": True}
 
 
-def test_output_validates_human_and_agent_before_printing(
+def test_output_validates_human_and_agent_shape_before_printing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -351,10 +351,19 @@ def test_output_validates_human_and_agent_before_printing(
             output(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="string keys"):
             output(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
-        with pytest.raises(TypeError, match="JSON-serializable"):
-            output(human="bad", agent={"bad": object()})
 
     assert capfd.readouterr().out == ""
+
+
+def test_output_human_mode_does_not_pre_check_agent_value_serializability(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["command"])
+
+    output(human="hello", agent={"unserializable": object()})
+
+    assert capfd.readouterr().out == "hello\n"
 
 
 def test_output_works_without_active_cllg_context(

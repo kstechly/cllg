@@ -544,10 +544,6 @@ def _validate_agent_payload(agent: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(agent, dict):
         raise TypeError("agent output must be a JSON object")
     _validate_string_keys(agent)
-    try:
-        json.dumps(agent, sort_keys=True)
-    except TypeError as exc:
-        raise TypeError("agent output must be JSON-serializable") from exc
     return agent
 
 
