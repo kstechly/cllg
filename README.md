@@ -59,15 +59,27 @@ with progress("training", total=epochs) as task:
 In `--json` mode progress is logged but not painted to the terminal. In human
 TTY mode it uses `alive-progress`.
 
-## Linting
+## Consumer Linting
 
-Use the repository linter to keep raw `print(...)` out of examples and app code:
+Consumer projects can use Ruff's `T201` rule to keep raw `print(...)` out of
+their app code:
 
-```bash
-uv run python scripts/lint_cllg_prints.py
+```toml
+[tool.ruff.lint]
+extend-select = ["T201"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["T201"]
 ```
 
-`print(...)` is allowed in `src/cllg/` internals and tests.
+Then run:
+
+```bash
+uv run ruff check .
+```
+
+`cllg` itself intentionally contains print calls in its internals and tests;
+the Ruff rule belongs in consumer repositories.
 
 ## Examples
 
