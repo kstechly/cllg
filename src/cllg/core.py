@@ -147,7 +147,7 @@ class LogSession(AbstractContextManager["LogSession"]):
         try:
             if exc_value is not None:
                 self.command_metadata["exception"] = {
-                    "type": exc_type.__name__ if exc_type is not None else None,
+                    "type": exc_type.__name__,
                     "message": str(exc_value),
                 }
             self.command_metadata["ended_at"] = self.clock().isoformat()
