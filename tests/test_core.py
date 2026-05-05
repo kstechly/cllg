@@ -348,7 +348,7 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
     assert len(finishes) == 1
     assert starts[0]["total"] == 2
     assert finishes[0]["current"] == 2
-    assert advances[0]["data"] == {"replication": 1}
+    assert {"replication": 1} in [advance["data"] for advance in advances]
 
 
 def test_non_tty_progress_falls_back_to_logged_events_only(

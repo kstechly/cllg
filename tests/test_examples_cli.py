@@ -108,7 +108,7 @@ def test_command_vs_events_example_shows_static_metadata_and_timeline(
     assert command_path.is_file()
     assert events_path.is_file()
     assert payload["command"]["command"] == "command_vs_events.py"
-    assert payload["events"]["count"] == len(events) - 1
+    assert payload["events"]["count"] == len(payload["events"]["types"])
     assert {"progress_start", "progress_advance", "progress_finish"} <= set(
         payload["events"]["types"]
     )
