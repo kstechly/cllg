@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
 import socket
 import subprocess
@@ -18,6 +19,45 @@ Clock = Callable[[], datetime]
 _CURRENT_SESSION: ContextVar[LogSession | None] = ContextVar(
     "cllg_current_session",
     default=None,
+)
+_ENV_ALLOWLIST = (
+    "PATH",
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "CONDA_PREFIX",
+    "UV_PROJECT_ENVIRONMENT",
+    "UV_PYTHON",
+    "CUDA_VISIBLE_DEVICES",
+    "CUDA_DEVICE_ORDER",
+    "CUDA_HOME",
+    "CUDA_PATH",
+    "NVIDIA_VISIBLE_DEVICES",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "CUBLAS_WORKSPACE_CONFIG",
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "PYTORCH_ENABLE_MPS_FALLBACK",
+    "TORCH_HOME",
+    "TORCH_EXTENSIONS_DIR",
+    "TORCH_LOGS",
+    "TORCHDYNAMO_VERBOSE",
+    "TORCHINDUCTOR_CACHE_DIR",
+    "NCCL_DEBUG",
+    "NCCL_SOCKET_IFNAME",
+    "NCCL_IB_DISABLE",
+    "NCCL_P2P_DISABLE",
+    "NCCL_ASYNC_ERROR_HANDLING",
+    "MASTER_ADDR",
+    "MASTER_PORT",
+    "RANK",
+    "LOCAL_RANK",
+    "WORLD_SIZE",
+    "LOCAL_WORLD_SIZE",
+    "NODE_RANK",
+    "GROUP_RANK",
+    "ROLE_RANK",
+    "ROLE_WORLD_SIZE",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
 )
 
 
@@ -388,8 +428,24 @@ def _command_metadata(
         },
         "platform": platform.platform(),
         "hostname": socket.gethostname(),
-        "env": {},
+        "env": _environment_metadata(),
         "git": git_metadata,
+    }
+
+
+def _environment_metadata() -> dict[str, Any]:
+    # SPEC-AMBIGUITY: (2026-05-05T00:00:00-04:00 User asked for "do the allowlist, but make it obvious it's an allowlisted env not all env, include common cuda, torch , torchrun, whatever stuff in there" but this could mean
+    # 1. keep env as a flat dict and rely on docs to explain it is allowlisted
+    # 2. wrap values in an explicit metadata object that names the allowlist behavior
+    # Choice defaulted to: 2 because command.json should be self-describing without requiring the README.
+    values = {
+        name: os.environ[name]
+        for name in _ENV_ALLOWLIST
+        if name in os.environ
+    }
+    return {
+        "kind": "allowlist",
+        "values": values,
     }
 
 

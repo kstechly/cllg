@@ -17,13 +17,35 @@ root, not the process working directory.
 
 ## What Gets Logged
 
-- `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, and git state.
+- `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, allowlisted environment metadata, and git state.
 - `events.jsonl`: structured debug timeline events.
 - `stdout.txt`: Python-level stdout emitted inside the context.
 - `stderr.txt`: Python-level stderr emitted inside the context.
 
 `cllg` captures Python `sys.stdout` and `sys.stderr`. Subprocess output inherited
 directly from file descriptors 1 and 2 is out of scope.
+
+`command.json` does not dump the full process environment. Its `env` field is
+self-describing:
+
+```json
+{
+  "kind": "allowlist",
+  "values": {
+    "CUDA_VISIBLE_DEVICES": "0,1",
+    "MASTER_ADDR": "127.0.0.1",
+    "PATH": "/usr/bin",
+    "TORCH_HOME": "/models/torch",
+    "WORLD_SIZE": "8"
+  }
+}
+```
+
+The allowlist covers common execution-context variables: `PATH`, `PYTHONPATH`,
+virtualenv/conda/uv markers, CUDA/NVIDIA settings, PyTorch cache/debug settings,
+NCCL settings, torchrun/distributed rank settings, and common thread-count
+settings. Secrets and arbitrary environment variables are intentionally not
+logged.
 
 If the current working directory is not inside a git repository, `cllg()` raises
 before creating a log directory. That is intentional: logs are repo-local debug

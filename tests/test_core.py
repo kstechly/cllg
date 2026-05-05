@@ -127,6 +127,36 @@ def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
     assert command["git"]["repo_root"] == str(repo)
 
 
+def test_cllg_records_only_allowlisted_environment_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["env-check"])
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+    monkeypatch.setenv("TORCH_HOME", "/models/torch")
+    monkeypatch.setenv("MASTER_ADDR", "127.0.0.1")
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "do-not-log")
+
+    with cllg() as session:
+        pass
+
+    env = _read_json(session.path / "command.json")["env"]
+    required_values = {
+        "CUDA_VISIBLE_DEVICES": "0,1",
+        "MASTER_ADDR": "127.0.0.1",
+        "PATH": "/usr/bin",
+        "TORCH_HOME": "/models/torch",
+        "WORLD_SIZE": "8",
+    }
+
+    assert env["kind"] == "allowlist"
+    assert required_values.items() <= env["values"].items()
+    assert "AWS_SECRET_ACCESS_KEY" not in env["values"]
+
+
 def test_cllg_records_git_commit_and_dirty_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
