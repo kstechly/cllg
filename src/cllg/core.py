@@ -79,27 +79,27 @@ def cllg() -> LogSession:
         repo_root / "logs" / opened_at.strftime("%Y-%m-%d"),
         f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
     )
-    _write_json(
-        path / "command.json",
-        _command_metadata(
-            command=command,
-            argv=argv,
-            cwd=cwd,
-            opened_at=opened_at,
-            git_metadata=git_metadata,
-        ),
+    command_metadata = _command_metadata(
+        command=command,
+        argv=argv,
+        cwd=cwd,
+        opened_at=opened_at,
+        git_metadata=git_metadata,
     )
+    _write_json(path / "command.json", command_metadata)
     (path / "events.jsonl").touch()
     (path / "stdout.out").touch()
     (path / "stderr.err").touch()
     return LogSession(
         path=path,
+        command_metadata=command_metadata,
     )
 
 
 @dataclass(slots=True)
 class LogSession(AbstractContextManager["LogSession"]):
     path: Path
+    command_metadata: dict[str, Any]
     clock: Clock = _utc_now
     _stdio_capture: AbstractContextManager[Any] | None = None
     _stdout_echo_fd: int | None = None
@@ -152,6 +152,8 @@ class LogSession(AbstractContextManager["LogSession"]):
                     text=str(exc_value),
                     data={"exception_type": exc_type.__name__},
                 )
+            self.command_metadata["ended_at"] = self.clock().isoformat()
+            _write_json(self.path / "command.json", self.command_metadata)
         finally:
             self._restore_stdio()
         return None
@@ -429,7 +431,8 @@ def _command_metadata(
         "command": command,
         "argv": argv,
         "cwd": str(cwd),
-        "timestamp": opened_at.isoformat(),
+        "started_at": opened_at.isoformat(),
+        "ended_at": None,
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,

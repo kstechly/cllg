@@ -17,7 +17,7 @@ root, not the process working directory.
 
 ## What Gets Logged
 
-- `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, allowlisted environment metadata, and git state.
+- `command.json`: argv, derived command name, cwd, `started_at`, `ended_at` (null until the session closes cleanly), Python/platform/host metadata, allowlisted environment metadata, and git state.
 - `events.jsonl`: structured debug timeline events.
 - `stdout.out`: stdout bytes emitted inside the context.
 - `stderr.err`: stderr bytes emitted inside the context.

@@ -443,6 +443,39 @@ def test_cllg_emits_session_end_on_clean_exit(
     assert session_ends[0]["data"] == {}
 
 
+def test_command_json_records_started_and_ended_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+
+    with cllg() as session:
+        mid_run = _read_json(session.path / "command.json")
+        assert mid_run["ended_at"] is None
+        assert datetime.fromisoformat(mid_run["started_at"]).tzinfo is not None
+
+    final = _read_json(session.path / "command.json")
+    started = datetime.fromisoformat(final["started_at"])
+    ended = datetime.fromisoformat(final["ended_at"])
+    assert started == datetime.fromisoformat(mid_run["started_at"])
+    assert ended >= started
+
+
+def test_command_json_keeps_ended_at_null_when_session_crashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+
+    session = cllg()
+    metadata = _read_json(session.path / "command.json")
+
+    assert metadata["ended_at"] is None
+    assert "started_at" in metadata
+
+
 def test_cllg_captures_logging_handlers_bound_inside_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
