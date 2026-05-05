@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import os
 import platform
-import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar, Token
@@ -520,13 +520,7 @@ def _git(cwd: Path, *args: str) -> str | None:
 
 def _unique_run_path(parent: Path, stem: str) -> Path:
     parent.mkdir(parents=True, exist_ok=True)
-    while True:
-        candidate = parent / f"{stem}-{secrets.token_hex(4)}"
-        try:
-            candidate.mkdir()
-            return candidate
-        except FileExistsError:
-            continue
+    return Path(tempfile.mkdtemp(prefix=f"{stem}-", dir=parent))
 
 
 def _slug(raw: str) -> str:

@@ -116,7 +116,7 @@ def test_cllg_creates_run_directory_and_command_metadata(
     assert (session.path / "stderr.err").is_file()
 
 
-def test_unique_run_path_adds_entropy_before_directory_exists(
+def test_unique_run_path_creates_distinct_dirs_under_same_stem(
     tmp_path: Path,
 ) -> None:
     parent = tmp_path / "logs"
