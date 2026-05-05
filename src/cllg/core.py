@@ -29,9 +29,10 @@ def cllg() -> LogSession:
     argv = list(sys.argv)
     command = _command_from_argv(argv)
     cwd = Path.cwd().resolve()
+    repo_root = _repo_root(cwd)
     opened_at = _utc_now()
     path = _unique_run_path(
-        Path("logs").resolve() / opened_at.strftime("%Y-%m-%d"),
+        repo_root / "logs" / opened_at.strftime("%Y-%m-%d"),
         f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
     )
     path.mkdir(parents=True)
@@ -404,6 +405,13 @@ def _git_metadata(cwd: Path) -> dict[str, Any]:
         "dirty": bool(status_short),
         "status_short": status_short,
     }
+
+
+def _repo_root(cwd: Path) -> Path:
+    repo_root = _git(cwd, "rev-parse", "--show-toplevel")
+    if repo_root is None:
+        raise RuntimeError("cllg must be run inside a git repository")
+    return Path(repo_root).resolve()
 
 
 def _git_head(*, commit: str | None, branch: str | None) -> dict[str, Any]:

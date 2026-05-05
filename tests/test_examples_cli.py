@@ -28,6 +28,7 @@ def _json_stdout(completed: subprocess.CompletedProcess[str]) -> dict[str, objec
 
 
 def _run_example(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    _init_git_repo(tmp_path)
     return subprocess.run(
         [sys.executable, str(REPO_ROOT / "examples" / args[0]), *args[1:]],
         cwd=tmp_path,
@@ -35,6 +36,25 @@ def _run_example(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]
         capture_output=True,
         text=True,
     )
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _init_git_repo(repo: Path) -> None:
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "cllg@example.invalid")
+    _git(repo, "config", "user.name", "cllg tests")
+    (repo / "tracked.txt").write_text("clean\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "initial")
 
 
 def _only_log_dir(tmp_path: Path) -> Path:

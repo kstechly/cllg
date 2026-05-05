@@ -53,32 +53,78 @@ def _init_git_repo(repo: Path) -> None:
     _git(repo, "commit", "-m", "initial")
 
 
+def _init_and_enter_git_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    monkeypatch.chdir(repo)
+    return repo
+
+
 def _fixed_clock() -> datetime:
     return datetime(2026, 5, 5, 14, 12, 33, tzinfo=timezone.utc)
+
+
+def test_cllg_fails_early_outside_git_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+
+    with pytest.raises(RuntimeError, match="git repository"):
+        cllg()
+
+    assert not (tmp_path / "logs").exists()
 
 
 def test_cllg_creates_run_directory_and_command_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["/usr/local/bin/smoke", "fixed", "--json"])
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
     with cllg() as session:
         assert session.path.is_dir()
-        assert session.path.parent == tmp_path / "logs" / "2026-05-05"
+        assert session.path.parent == repo / "logs" / "2026-05-05"
         assert session.path.name.startswith("141233-smoke")
 
     command = _read_json(session.path / "command.json")
 
     assert command["command"] == "smoke"
     assert command["argv"] == ["/usr/local/bin/smoke", "fixed", "--json"]
-    assert command["cwd"] == str(tmp_path)
-    assert command["git"] == {"present": False}
+    assert command["cwd"] == str(repo)
+    assert command["git"]["present"] is True
     assert (session.path / "events.jsonl").is_file()
     assert (session.path / "stdout.txt").is_file()
     assert (session.path / "stderr.txt").is_file()
+
+
+def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    nested = repo / "src" / "tool"
+    nested.mkdir(parents=True)
+    _init_git_repo(repo)
+    monkeypatch.chdir(nested)
+    monkeypatch.setattr(sys, "argv", ["nested-command"])
+    monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
+
+    with cllg() as session:
+        pass
+
+    command = _read_json(session.path / "command.json")
+
+    assert session.path.parent == repo / "logs" / "2026-05-05"
+    assert command["cwd"] == str(nested)
+    assert command["git"]["repo_root"] == str(repo)
 
 
 def test_cllg_records_git_commit_and_dirty_state(
@@ -135,7 +181,7 @@ def test_cllg_logs_events(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["smoke"])
 
     with cllg() as session:
@@ -152,7 +198,7 @@ def test_current_session_is_context_local_and_restored_for_nested_sessions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["outer"])
 
     assert current_session() is None
@@ -170,7 +216,7 @@ def test_output_prints_human_text_and_records_event_inside_cllg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stdout = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
@@ -193,7 +239,7 @@ def test_output_prints_agent_json_in_json_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stdout = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command", "--json"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
@@ -211,7 +257,7 @@ def test_output_validates_human_and_agent_before_printing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stdout = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
 
@@ -246,7 +292,7 @@ def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
 ) -> None:
     forwarded_stdout = io.StringIO()
     forwarded_stderr = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
@@ -271,7 +317,7 @@ def test_cllg_restores_streams_after_exception(
 ) -> None:
     forwarded_stdout = io.StringIO()
     forwarded_stderr = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
@@ -301,7 +347,7 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stderr = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
     logger = logging.getLogger("cllg.tests.capture")
@@ -329,7 +375,7 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = FakeTty()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["smoke", "--json"])
     with cllg() as session:
         with progress("smoke fixed limerick", total=2, stream=stream) as task:
@@ -356,7 +402,7 @@ def test_non_tty_progress_falls_back_to_logged_events_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = io.StringIO()
-    monkeypatch.chdir(tmp_path)
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["batch"])
     with cllg() as session:
         with progress("batch", total=1, stream=stream) as task:

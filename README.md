@@ -9,9 +9,11 @@ with cllg():
     output(human="processed 3 items", agent={"ok": True, "items": 3})
 ```
 
-`cllg()` creates a timestamped run directory under `logs/`, writes invocation
+`cllg()` must run inside a git repository. It creates a timestamped run
+directory under the repository root's `logs/` directory, writes invocation
 metadata, and tees Python-level stdout/stderr into log files without changing
-what the command prints.
+what the command prints. Running from a subdirectory still writes to the repo
+root, not the process working directory.
 
 ## What Gets Logged
 
@@ -22,6 +24,11 @@ what the command prints.
 
 `cllg` captures Python `sys.stdout` and `sys.stderr`. Subprocess output inherited
 directly from file descriptors 1 and 2 is out of scope.
+
+If the current working directory is not inside a git repository, `cllg()` raises
+before creating a log directory. That is intentional: logs are repo-local debug
+history, and silently writing wherever the shell happens to be is brittle
+garbage.
 
 ## Output
 
