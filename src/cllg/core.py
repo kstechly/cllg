@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, Iterable, Iterator, Protocol, TextIO
+from collections.abc import Callable, Iterable, Iterator
+from typing import Any, Protocol, TextIO
 
 Clock = Callable[[], datetime]
 _CURRENT_SESSION: ContextVar[LogSession | None] = ContextVar(
