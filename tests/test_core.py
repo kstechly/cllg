@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-import cllg as cllg_pkg
+import cllg as cllg_module
 from cllg import cllg, progress
 from cllg.core import _unique_run_path
 
@@ -123,7 +123,7 @@ def test_cllg_print_replaces_print_and_records_prints_jsonl(
     monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg() as session:
-        cllg_pkg.print(human="processed 3 items", agent={"ok": True, "items": 3})
+        cllg_module.print(human="processed 3 items", agent={"ok": True, "items": 3})
 
     assert capfd.readouterr().out == "processed 3 items\n"
     records = _read_prints(session.path / "prints.jsonl")
@@ -146,8 +146,8 @@ def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
     monkeypatch.setattr(sys, "argv", ["command", "--json"])
 
     with cllg() as session:
-        cllg_pkg.print(human="one", agent={"event": "one"})
-        cllg_pkg.print(human="two", agent={"event": "two"})
+        cllg_module.print(human="one", agent={"event": "one"})
+        cllg_module.print(human="two", agent={"event": "two"})
 
     assert [json.loads(line) for line in capfd.readouterr().out.splitlines()] == [
         {"event": "one"},
@@ -164,7 +164,7 @@ def test_cllg_print_deep_code_uses_active_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def deep_print() -> None:
-        cllg_pkg.print(human="deep", agent={"scope": "deep"})
+        cllg_module.print(human="deep", agent={"scope": "deep"})
 
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
@@ -345,8 +345,8 @@ def test_nested_print_records_go_to_the_active_session(
 
     with cllg() as outer:
         with cllg() as inner:
-            cllg_pkg.print(human="inner", agent={"scope": "inner"})
-        cllg_pkg.print(human="outer", agent={"scope": "outer"})
+            cllg_module.print(human="inner", agent={"scope": "inner"})
+        cllg_module.print(human="outer", agent={"scope": "outer"})
 
     outer_outputs = _read_prints(outer.path / "prints.jsonl")
     inner_outputs = _read_prints(inner.path / "prints.jsonl")
@@ -383,7 +383,7 @@ def test_print_prints_agent_json_in_json_mode(
     monkeypatch.setattr(sys, "argv", ["command", "--json"])
 
     with cllg() as session:
-        cllg_pkg.print(human="processed 3 items", agent={"items": 3, "ok": True})
+        cllg_module.print(human="processed 3 items", agent={"items": 3, "ok": True})
 
     captured = capfd.readouterr()
     assert json.loads(captured.out) == {"items": 3, "ok": True}
@@ -399,13 +399,13 @@ def test_print_validates_human_and_agent_shape_before_printing(
 
     with cllg():
         with pytest.raises(TypeError, match="human"):
-            cllg_pkg.print(human=object(), agent={"ok": True})  # type: ignore[arg-type]
+            cllg_module.print(human=object(), agent={"ok": True})  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="agent"):
-            cllg_pkg.print(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
+            cllg_module.print(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="string keys"):
-            cllg_pkg.print(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
+            cllg_module.print(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
         with pytest.raises(TypeError, match="JSON-serializable"):
-            cllg_pkg.print(human="bad", agent={"bad": object()})
+            cllg_module.print(human="bad", agent={"bad": object()})
 
     assert capfd.readouterr().out == ""
 
@@ -416,7 +416,7 @@ def test_print_works_without_active_cllg_context(
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["command"])
 
-    cllg_pkg.print(human="outside", agent={"ok": True})
+    cllg_module.print(human="outside", agent={"ok": True})
 
     assert capfd.readouterr().out == "outside\n"
 

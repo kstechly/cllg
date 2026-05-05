@@ -48,8 +48,8 @@ def _payload(log_dir: Path) -> dict[str, object]:
         "prints": {
             "file": "prints.jsonl",
             "purpose": PRINTS_PURPOSE,
-            "count": len(prints),
-            "kinds": [record["kind"] for record in prints],
+            "count_before_final_print": len(prints),
+            "kinds_before_final_print": [record["kind"] for record in prints],
         },
     }
 
@@ -61,7 +61,7 @@ def _human_payload(payload: dict[str, object]) -> str:
         [
             f"command.json: {COMMAND_PURPOSE}",
             f"prints.jsonl: {PRINTS_PURPOSE}",
-            f"prints: {prints['count']}",
+            f"prints before final print: {prints['count_before_final_print']}",
         ]
     )
 

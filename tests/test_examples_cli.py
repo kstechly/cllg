@@ -209,8 +209,10 @@ def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
     assert command_path.is_file()
     assert prints_path.is_file()
     assert payload["command"]["command"] == "command_vs_prints.py"
-    assert payload["prints"]["count"] == len(payload["prints"]["kinds"])
-    assert "progress" in payload["prints"]["kinds"]
+    assert payload["prints"]["count_before_final_print"] == len(
+        payload["prints"]["kinds_before_final_print"]
+    )
+    assert "progress" in payload["prints"]["kinds_before_final_print"]
     assert "print" in [record["kind"] for record in records]
 
 
