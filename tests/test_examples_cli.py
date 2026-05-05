@@ -134,8 +134,8 @@ def test_json_mode_example_prints_json_normally_and_logs_stdout(
 
     assert completed.stderr == ""
     assert payload["ok"] is True
-    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
-    assert (log_dir / "stderr.txt").read_text(encoding="utf-8") == ""
+    assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
+    assert (log_dir / "stderr.err").read_text(encoding="utf-8") == ""
     assert (log_dir / "command.json").is_file()
 
 
@@ -147,8 +147,8 @@ def test_human_mode_example_keeps_printing_human_output_and_logs_it(
 
     assert completed.stdout == "ok\n"
     assert completed.stderr == ""
-    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
-    assert (log_dir / "stderr.txt").read_text(encoding="utf-8") == ""
+    assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
+    assert (log_dir / "stderr.err").read_text(encoding="utf-8") == ""
 
 
 def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
@@ -170,7 +170,7 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     assert completed.stderr == ""
     assert payload["ok"] is True
     assert payload["steps"] == 2
-    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
+    assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
     assert len(_events_of_type(events, "progress_advance")) == 2
     assert _events_of_type(events, "progress_start")
     assert _events_of_type(events, "progress_finish")
@@ -195,7 +195,7 @@ def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
     assert completed.stderr == ""
     assert payload["ok"] is True
     assert payload["epochs"] == 2
-    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
+    assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
     assert _events_of_type(events, "progress_message")
     assert len(_events_of_type(events, "progress_advance")) == 2
 
@@ -264,8 +264,8 @@ with cllg():
 
     assert completed.stdout == b"print stdout\nbuffer stdout\nchild stdout\n"
     assert completed.stderr == b"print stderr\nPRE:preexisting logging\nchild stderr\n"
-    assert (log_dir / "stdout.txt").read_bytes() == completed.stdout
-    assert (log_dir / "stderr.txt").read_bytes() == completed.stderr
+    assert (log_dir / "stdout.out").read_bytes() == completed.stdout
+    assert (log_dir / "stderr.err").read_bytes() == completed.stderr
 
 
 def test_fd_capture_preserves_invalid_stdout_bytes(
@@ -288,7 +288,7 @@ with cllg():
     log_dir = _only_log_dir(tmp_path)
 
     assert completed.stdout == b"bad:\xff\n"
-    assert (log_dir / "stdout.txt").read_bytes() == b"bad:\xff\n"
+    assert (log_dir / "stdout.out").read_bytes() == b"bad:\xff\n"
 
 
 def test_nested_cllg_logs_inner_output_to_inner_and_outer_sessions(
@@ -312,13 +312,13 @@ with cllg():
     outer = next(
         path
         for path in log_dirs
-        if (path / "stdout.txt").read_bytes() == completed.stdout
+        if (path / "stdout.out").read_bytes() == completed.stdout
     )
     inner = next(path for path in log_dirs if path != outer)
 
     assert completed.stdout == b"outer before\ninner\nouter after\n"
-    assert (outer / "stdout.txt").read_bytes() == completed.stdout
-    assert (inner / "stdout.txt").read_bytes() == b"inner\n"
+    assert (outer / "stdout.out").read_bytes() == completed.stdout
+    assert (inner / "stdout.out").read_bytes() == b"inner\n"
 
 
 def test_progress_paints_on_tty_inside_cllg(

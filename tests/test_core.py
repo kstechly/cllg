@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from cllg import cllg, current_session, output, progress
+from cllg import cllg, output, progress
 
 
 class FakeTty(io.StringIO):
@@ -111,8 +111,8 @@ def test_cllg_creates_run_directory_and_command_metadata(
     assert command["cwd"] == str(repo)
     assert command["git"]["present"] is True
     assert (session.path / "events.jsonl").is_file()
-    assert (session.path / "stdout.txt").is_file()
-    assert (session.path / "stderr.txt").is_file()
+    assert (session.path / "stdout.out").is_file()
+    assert (session.path / "stderr.err").is_file()
 
 
 def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
@@ -266,21 +266,23 @@ def test_cllg_logs_events(
     assert messages[0]["data"] == {"replication": 0}
 
 
-def test_current_session_is_context_local_and_restored_for_nested_sessions(
+def test_nested_output_events_go_to_the_active_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["outer"])
 
-    assert current_session() is None
     with cllg() as outer:
-        assert current_session() is outer
         with cllg() as inner:
-            assert current_session() is inner
-        assert current_session() is outer
+            output(human="inner", agent={"scope": "inner"})
+        output(human="outer", agent={"scope": "outer"})
 
-    assert current_session() is None
+    outer_outputs = _events_of_type(_read_events(outer.path / "events.jsonl"), "output")
+    inner_outputs = _events_of_type(_read_events(inner.path / "events.jsonl"), "output")
+
+    assert [event["data"] for event in outer_outputs] == [{"scope": "outer"}]
+    assert [event["data"] for event in inner_outputs] == [{"scope": "inner"}]
 
 
 def test_output_prints_human_text_and_records_event_inside_cllg(

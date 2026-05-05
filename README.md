@@ -19,8 +19,8 @@ root, not the process working directory.
 
 - `command.json`: argv, derived command name, cwd, timestamp, Python/platform/host metadata, allowlisted environment metadata, and git state.
 - `events.jsonl`: structured debug timeline events.
-- `stdout.txt`: stdout bytes emitted inside the context.
-- `stderr.txt`: stderr bytes emitted inside the context.
+- `stdout.out`: stdout bytes emitted inside the context.
+- `stderr.err`: stderr bytes emitted inside the context.
 
 `cllg` captures at the stdout/stderr file-descriptor level. That includes
 `print(...)`, `sys.stdout.write(...)`, `sys.stdout.buffer.write(...)`, Python
@@ -32,9 +32,8 @@ Nested sessions are allowed. The outer session log includes inner session
 output, because the outer session represents the whole command run; the inner
 session log contains its own slice.
 
-`stdout.txt` and `stderr.txt` preserve output bytes. They are named `.txt`
-because normal CLI output is text, but invalid UTF-8 bytes are not rewritten or
-dropped.
+`stdout.out` and `stderr.err` preserve output bytes. Invalid UTF-8 bytes are not
+rewritten or dropped.
 
 `command.json` does not dump the full process environment. Its `env` field is
 self-describing:
@@ -217,7 +216,7 @@ def main() -> int:
     return 0
 ```
 
-That immediately tees normal CLI output into `stdout.txt` and `stderr.txt` while
+That immediately tees normal CLI output into `stdout.out` and `stderr.err` while
 preserving normal terminal output. This includes Python text writes, Python
 buffer writes, stdout/stderr logging handlers, and subprocess output inherited
 on standard file descriptors.

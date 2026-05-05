@@ -6,14 +6,14 @@ import platform
 import socket
 import subprocess
 import sys
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from collections.abc import Callable, Iterator
-from typing import Any, BinaryIO, Protocol, TextIO
+from typing import Any, BinaryIO, TextIO
 
 from wurlitzer import pipes
 
@@ -90,8 +90,8 @@ def cllg() -> LogSession:
         ),
     )
     (path / "events.jsonl").touch()
-    (path / "stdout.txt").touch()
-    (path / "stderr.txt").touch()
+    (path / "stdout.out").touch()
+    (path / "stderr.err").touch()
     return LogSession(
         path=path,
     )
@@ -116,8 +116,8 @@ class LogSession(AbstractContextManager["LogSession"]):
             self._stderr_isatty = sys.stderr.isatty()
             self._stdout_echo_fd = os.dup(1)
             self._stderr_echo_fd = os.dup(2)
-            self._stdout_file = (self.path / "stdout.txt").open("ab")
-            self._stderr_file = (self.path / "stderr.txt").open("ab")
+            self._stdout_file = (self.path / "stdout.out").open("ab")
+            self._stderr_file = (self.path / "stderr.err").open("ab")
             stdio_capture = pipes(
                 stdout=_FdTee(self._stdout_echo_fd, self._stdout_file),
                 stderr=_FdTee(self._stderr_echo_fd, self._stderr_file),
@@ -210,7 +210,7 @@ def _flush_stdio() -> None:
     sys.stderr.flush()
 
 
-def current_session() -> LogSession | None:
+def _current_session() -> LogSession | None:
     return _CURRENT_SESSION.get()
 
 
@@ -218,7 +218,7 @@ def output(*, human: str, agent: dict[str, Any]) -> None:
     _validate_output_payload(human=human, agent=agent)
     text = _agent_text(agent) if _json_mode() else human
     print(text)
-    session = current_session()
+    session = _current_session()
     if session is not None:
         session.event("output", text=human, data=agent)
 
@@ -229,23 +229,30 @@ def progress(
     total: int | None = None,
     stream: TextIO | None = None,
 ) -> AbstractContextManager[ProgressTask]:
-    session = current_session()
+    session = _current_session()
     progress_stream = stream or sys.stderr
-    force_tty = None
+    terminal_is_tty = None
     if stream is None and session is not None:
-        force_tty = session._stderr_isatty
-    sink = _make_progress_sink(
+        terminal_is_tty = session._stderr_isatty
+    display_context = _make_progress_display(
         json_mode=_json_mode(),
         stream=progress_stream,
-        force_tty=force_tty,
+        terminal_is_tty=terminal_is_tty,
+        title=title,
+        total=total,
     )
-    return _progress_task(session=session, sink=sink, title=title, total=total)
+    return _progress_task(
+        session=session,
+        display_context=display_context,
+        title=title,
+        total=total,
+    )
 
 
 @dataclass(slots=True)
 class ProgressTask:
     session: LogSession | None
-    display: ProgressDisplay
+    display: _ProgressDisplay
     title: str
     total: int | None = None
     _current: int = 0
@@ -296,14 +303,14 @@ class ProgressTask:
 def _progress_task(
     *,
     session: LogSession | None,
-    sink: ProgressSink,
+    display_context: AbstractContextManager[_ProgressDisplay],
     title: str,
     total: int | None,
 ) -> Iterator[ProgressTask]:
     current = 0
     if session is not None:
         session.event("progress_start", text=title, current=current, total=total)
-    with sink.task(title=title, total=total) as display:
+    with display_context as display:
         task = ProgressTask(
             session=session,
             display=display,
@@ -322,86 +329,24 @@ def _progress_task(
                 )
 
 
-class ProgressDisplay(Protocol):
+class _ProgressDisplay:
     def update(self, *, advance: int, text: str) -> None:
-        ...
+        raise NotImplementedError
 
     def message(self, text: str) -> None:
-        ...
+        raise NotImplementedError
 
 
-class ProgressSink(Protocol):
-    def task(
-        self,
-        *,
-        title: str,
-        total: int | None,
-    ) -> AbstractContextManager[ProgressDisplay]:
-        ...
-
-
-class NoopProgressSink(ProgressSink):
-    def task(
-        self,
-        *,
-        title: str,
-        total: int | None,
-    ) -> AbstractContextManager[ProgressDisplay]:
-        return nullcontext(NoopProgressDisplay())
-
-
-class NoopProgressDisplay(ProgressDisplay):
+class _NoopProgressDisplay(_ProgressDisplay):
     def update(self, *, advance: int, text: str) -> None:
         return None
 
     def message(self, text: str) -> None:
         return None
-
-
-class AliveProgressSink(ProgressSink):
-    def __init__(self, stream: TextIO, *, force_tty: bool) -> None:
-        self._stream = stream
-        self._force_tty = force_tty
-
-    def task(
-        self,
-        *,
-        title: str,
-        total: int | None,
-    ) -> AbstractContextManager[ProgressDisplay]:
-        from alive_progress import alive_bar
-
-        return AliveProgressContext(
-            alive_bar(
-                total,
-                title=title,
-                file=self._stream,
-                force_tty=self._force_tty,
-                enrich_print=True,
-                dual_line=True,
-                receipt=True,
-            )
-        )
-
-
-class AliveProgressContext(AbstractContextManager[ProgressDisplay]):
-    def __init__(self, manager: AbstractContextManager[Any]) -> None:
-        self._manager = manager
-
-    def __enter__(self) -> ProgressDisplay:
-        return AliveProgressDisplay(self._manager.__enter__())
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool | None:
-        return self._manager.__exit__(exc_type, exc_value, traceback)
 
 
 @dataclass(frozen=True, slots=True)
-class AliveProgressDisplay(ProgressDisplay):
+class _AliveProgressDisplay(_ProgressDisplay):
     bar: Any
 
     def update(self, *, advance: int, text: str) -> None:
@@ -417,16 +362,39 @@ class AliveProgressDisplay(ProgressDisplay):
             text_attr(text)
 
 
-def _make_progress_sink(
+def _make_progress_display(
     *,
     json_mode: bool,
     stream: TextIO,
-    force_tty: bool | None = None,
-) -> ProgressSink:
-    is_tty = stream.isatty() if force_tty is None else force_tty
+    title: str,
+    total: int | None,
+    terminal_is_tty: bool | None = None,
+) -> AbstractContextManager[_ProgressDisplay]:
+    is_tty = stream.isatty() if terminal_is_tty is None else terminal_is_tty
     if json_mode or not is_tty:
-        return NoopProgressSink()
-    return AliveProgressSink(stream, force_tty=is_tty)
+        return nullcontext(_NoopProgressDisplay())
+    return _alive_progress_display(stream=stream, title=title, total=total)
+
+
+@contextmanager
+def _alive_progress_display(
+    *,
+    stream: TextIO,
+    title: str,
+    total: int | None,
+) -> Iterator[_AliveProgressDisplay]:
+    from alive_progress import alive_bar
+
+    with alive_bar(
+        total,
+        title=title,
+        file=stream,
+        force_tty=True,
+        enrich_print=True,
+        dual_line=True,
+        receipt=True,
+    ) as bar:
+        yield _AliveProgressDisplay(bar)
 
 
 def _command_metadata(
