@@ -17,6 +17,10 @@ def _read_events(path: Path) -> list[dict[str, object]]:
     ]
 
 
+def _events_of_type(events: list[dict[str, object]], event_type: str) -> list[dict[str, object]]:
+    return [event for event in events if event["type"] == event_type]
+
+
 def _json_stdout(completed: subprocess.CompletedProcess[str]) -> dict[str, object]:
     payload = json.loads(completed.stdout)
     assert isinstance(payload, dict)
@@ -80,15 +84,14 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     payload = _json_stdout(completed)
     log_dir = _only_log_dir(tmp_path)
     events = _read_events(log_dir / "events.jsonl")
-    event_types = [event["type"] for event in events]
 
     assert completed.stderr == ""
     assert payload["ok"] is True
     assert payload["steps"] == 2
     assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == completed.stdout
-    assert event_types.count("progress_advance") == 2
-    assert "progress_start" in event_types
-    assert "progress_finish" in event_types
+    assert len(_events_of_type(events, "progress_advance")) == 2
+    assert _events_of_type(events, "progress_start")
+    assert _events_of_type(events, "progress_finish")
 
 
 def test_command_vs_events_example_shows_static_metadata_and_timeline(

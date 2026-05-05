@@ -30,6 +30,10 @@ def _read_events(path: Path) -> list[dict[str, object]]:
     ]
 
 
+def _events_of_type(events: list[dict[str, object]], event_type: str) -> list[dict[str, object]]:
+    return [event for event in events if event["type"] == event_type]
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
@@ -138,9 +142,10 @@ def test_cllg_logs_events(
         session.event("message", text="starting", data={"replication": 0})
 
     events = _read_events(session.path / "events.jsonl")
-    assert events[0]["type"] == "message"
-    assert events[0]["text"] == "starting"
-    assert events[0]["data"] == {"replication": 0}
+    messages = _events_of_type(events, "message")
+    assert len(messages) == 1
+    assert messages[0]["text"] == "starting"
+    assert messages[0]["data"] == {"replication": 0}
 
 
 def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
@@ -194,8 +199,9 @@ def test_cllg_restores_streams_after_exception(
     ).read_text(encoding="utf-8") == "captured before exception\n"
     assert (session.path / "stderr.txt").read_text(encoding="utf-8") == ""
     events = _read_events(session.path / "events.jsonl")
-    assert events[-1]["type"] == "exception"
-    assert events[-1]["data"] == {"exception_type": "RuntimeError"}
+    exceptions = _events_of_type(events, "exception")
+    assert len(exceptions) == 1
+    assert exceptions[0]["data"] == {"exception_type": "RuntimeError"}
 
 
 def test_cllg_captures_logging_handlers_bound_inside_context(
@@ -242,13 +248,15 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
 
     assert stream.getvalue() == ""
     events = _read_events(session.path / "events.jsonl")
-    advances = [event for event in events if event["type"] == "progress_advance"]
+    starts = _events_of_type(events, "progress_start")
+    advances = _events_of_type(events, "progress_advance")
+    finishes = _events_of_type(events, "progress_finish")
 
-    assert events[0]["type"] == "progress_start"
-    assert events[-1]["type"] == "progress_finish"
+    assert len(starts) == 1
     assert len(advances) == 2
-    assert events[0]["total"] == 2
-    assert events[-1]["current"] == 2
+    assert len(finishes) == 1
+    assert starts[0]["total"] == 2
+    assert finishes[0]["current"] == 2
 
 
 def test_non_tty_progress_falls_back_to_logged_events_only(
