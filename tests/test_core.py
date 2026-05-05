@@ -89,13 +89,37 @@ def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
     git = command["git"]
 
     assert git["present"] is True
-    assert isinstance(git["commit"], str)
-    assert len(git["commit"]) == 40
-    assert git["short_commit"] == git["commit"][:8]
-    assert isinstance(git["branch"], str)
-    assert git["branch"]
+    assert git["head"]["kind"] == "commit"
+    assert isinstance(git["head"]["commit"], str)
+    assert len(git["head"]["commit"]) == 40
+    assert git["head"]["short_commit"] == git["head"]["commit"][:8]
+    assert isinstance(git["head"]["branch"], str)
+    assert git["head"]["branch"]
     assert git["dirty"] is True
     assert any("tracked.txt" in entry for entry in git["status_short"])
+
+
+def test_session_records_unborn_git_repo_without_fake_commit(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+
+    with open_log_session(
+        command="game",
+        argv=["game"],
+        log_root=tmp_path / "logs",
+        cwd=repo,
+        clock=_fixed_clock,
+    ) as session:
+        pass
+
+    git = _read_json(session.path / "command.json")["git"]
+
+    assert git["present"] is True
+    assert git["head"] == {"kind": "unborn", "branch": "main"}
+    assert git["dirty"] is True
+    assert any("untracked.txt" in entry for entry in git["status_short"])
 
 
 def test_session_writes_json_artifacts_and_jsonl_events(tmp_path: Path) -> None:

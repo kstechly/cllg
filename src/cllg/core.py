@@ -6,12 +6,12 @@ import platform
 import socket
 import subprocess
 import sys
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Iterator, Protocol, TextIO
 
 Clock = Callable[[], datetime]
 
@@ -29,46 +29,35 @@ def open_log_session(
     clock: Clock = _utc_now,
     env_keys: tuple[str, ...] = (),
 ) -> LogSession:
-    session = LogSession(
-        command=command,
-        argv=list(sys.argv if argv is None else argv),
-        log_root=Path(log_root),
-        cwd=(Path.cwd() if cwd is None else Path(cwd)).resolve(),
-        clock=clock,
-        env_keys=env_keys,
+    argv_list = list(sys.argv if argv is None else argv)
+    cwd_path = (Path.cwd() if cwd is None else Path(cwd)).resolve()
+    opened_at = clock()
+    path = _unique_run_path(
+        Path(log_root) / opened_at.strftime("%Y-%m-%d"),
+        f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
     )
-    session.open()
-    return session
+    path.mkdir(parents=True)
+    _write_json(
+        path / "command.json",
+        _command_metadata(
+            command=command,
+            argv=argv_list,
+            cwd=cwd_path,
+            opened_at=opened_at,
+            env_keys=env_keys,
+        ),
+    )
+    (path / "events.jsonl").touch()
+    return LogSession(
+        path=path,
+        clock=clock,
+    )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class LogSession(AbstractContextManager["LogSession"]):
-    command: str
-    argv: list[str]
-    log_root: Path
-    cwd: Path
+    path: Path
     clock: Clock = _utc_now
-    env_keys: tuple[str, ...] = ()
-    path: Path | None = None
-
-    def open(self) -> None:
-        opened_at = self.clock()
-        self.path = _unique_run_path(
-            self.log_root / opened_at.strftime("%Y-%m-%d"),
-            f"{opened_at.strftime('%H%M%S')}-{_slug(self.command)}",
-        )
-        self.path.mkdir(parents=True)
-        self._write_json(
-            self.path / "command.json",
-            _command_metadata(
-                command=self.command,
-                argv=self.argv,
-                cwd=self.cwd,
-                clock=self.clock,
-                env_keys=self.env_keys,
-            ),
-        )
-        (self.path / "events.jsonl").touch()
 
     def __enter__(self) -> LogSession:
         return self
@@ -102,12 +91,12 @@ class LogSession(AbstractContextManager["LogSession"]):
             "data": data or {},
             **fields,
         }
-        with (self._require_path() / "events.jsonl").open("a", encoding="utf-8") as file:
+        with (self.path / "events.jsonl").open("a", encoding="utf-8") as file:
             file.write(json.dumps(event, sort_keys=True) + "\n")
 
     def write_json_artifact(self, name: str, payload: Any) -> Path:
         path = self._artifact_path(name)
-        self._write_json(path, payload)
+        _write_json(path, payload)
         self.event("artifact", text=name, data={"path": str(path)})
         return path
 
@@ -115,21 +104,9 @@ class LogSession(AbstractContextManager["LogSession"]):
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"artifact name must be relative to the log session: {name!r}")
-        path = self._require_path() / relative
+        path = self.path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
-
-    def _require_path(self) -> Path:
-        if self.path is None:
-            raise RuntimeError("log session is not open")
-        return self.path
-
-    @staticmethod
-    def _write_json(path: Path, payload: Any) -> None:
-        path.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
 
 
 def make_progress(
@@ -144,13 +121,13 @@ def make_progress(
     )
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ProgressReporter:
     session: LogSession
     sink: ProgressSink
 
-    def task(self, title: str, *, total: int | None = None) -> ProgressTask:
-        return ProgressTask(
+    def task(self, title: str, *, total: int | None = None) -> AbstractContextManager[ProgressTask]:
+        return _progress_task(
             session=self.session,
             sink=self.sink,
             title=title,
@@ -159,47 +136,26 @@ class ProgressReporter:
 
 
 @dataclass(slots=True)
-class ProgressTask(AbstractContextManager["ProgressTask"]):
+class ProgressTask:
     session: LogSession
-    sink: ProgressSink
+    display: ProgressDisplay
     title: str
     total: int | None = None
-    current: int = 0
+    _current: int = 0
 
-    def __enter__(self) -> ProgressTask:
-        self.session.event(
-            "progress_start",
-            text=self.title,
-            current=self.current,
-            total=self.total,
-        )
-        self.sink.start(title=self.title, total=self.total)
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool | None:
-        self.session.event(
-            "progress_finish",
-            text=self.title,
-            current=self.current,
-            total=self.total,
-        )
-        self.sink.finish()
-        return None
+    @property
+    def current(self) -> int:
+        return self._current
 
     def message(self, text: str, *, data: dict[str, Any] | None = None) -> None:
         self.session.event(
             "progress_message",
             text=text,
             data=data,
-            current=self.current,
+            current=self._current,
             total=self.total,
         )
-        self.sink.message(text)
+        self.display.message(text)
 
     def update(
         self,
@@ -208,84 +164,135 @@ class ProgressTask(AbstractContextManager["ProgressTask"]):
         text: str = "",
         data: dict[str, Any] | None = None,
     ) -> None:
-        self.current += advance
+        self._current += advance
         self.session.event(
             "progress_advance",
             text=text,
             data=data,
-            current=self.current,
+            current=self._current,
             total=self.total,
             advance=advance,
         )
-        self.sink.update(advance=advance, text=text)
+        self.display.update(advance=advance, text=text)
 
 
-class ProgressSink:
-    def start(self, *, title: str, total: int | None) -> None:
-        raise NotImplementedError
+@contextmanager
+def _progress_task(
+    *,
+    session: LogSession,
+    sink: ProgressSink,
+    title: str,
+    total: int | None,
+) -> Iterator[ProgressTask]:
+    current = 0
+    session.event("progress_start", text=title, current=current, total=total)
+    with sink.task(title=title, total=total) as display:
+        task = ProgressTask(
+            session=session,
+            display=display,
+            title=title,
+            total=total,
+        )
+        try:
+            yield task
+        finally:
+            session.event(
+                "progress_finish",
+                text=title,
+                current=task.current,
+                total=total,
+            )
 
+
+class ProgressDisplay(Protocol):
     def update(self, *, advance: int, text: str) -> None:
-        raise NotImplementedError
+        ...
 
     def message(self, text: str) -> None:
-        raise NotImplementedError
+        ...
 
-    def finish(self) -> None:
-        raise NotImplementedError
+
+class ProgressSink(Protocol):
+    def task(
+        self,
+        *,
+        title: str,
+        total: int | None,
+    ) -> AbstractContextManager[ProgressDisplay]:
+        ...
 
 
 class NoopProgressSink(ProgressSink):
-    def start(self, *, title: str, total: int | None) -> None:
-        return None
+    def task(
+        self,
+        *,
+        title: str,
+        total: int | None,
+    ) -> AbstractContextManager[ProgressDisplay]:
+        return nullcontext(NoopProgressDisplay())
 
+
+class NoopProgressDisplay(ProgressDisplay):
     def update(self, *, advance: int, text: str) -> None:
         return None
 
     def message(self, text: str) -> None:
-        return None
-
-    def finish(self) -> None:
         return None
 
 
 class AliveProgressSink(ProgressSink):
     def __init__(self, stream: TextIO) -> None:
         self._stream = stream
-        self._manager: Any = None
-        self._bar: Any = None
 
-    def start(self, *, title: str, total: int | None) -> None:
+    def task(
+        self,
+        *,
+        title: str,
+        total: int | None,
+    ) -> AbstractContextManager[ProgressDisplay]:
         from alive_progress import alive_bar
 
-        self._manager = alive_bar(
-            total,
-            title=title,
-            file=self._stream,
-            enrich_print=True,
-            dual_line=True,
-            receipt=True,
+        return AliveProgressContext(
+            alive_bar(
+                total,
+                title=title,
+                file=self._stream,
+                enrich_print=True,
+                dual_line=True,
+                receipt=True,
+            )
         )
-        self._bar = self._manager.__enter__()
+
+
+class AliveProgressContext(AbstractContextManager[ProgressDisplay]):
+    def __init__(self, manager: AbstractContextManager[Any]) -> None:
+        self._manager = manager
+
+    def __enter__(self) -> ProgressDisplay:
+        return AliveProgressDisplay(self._manager.__enter__())
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        return self._manager.__exit__(exc_type, exc_value, traceback)
+
+
+@dataclass(frozen=True, slots=True)
+class AliveProgressDisplay(ProgressDisplay):
+    bar: Any
 
     def update(self, *, advance: int, text: str) -> None:
-        if self._bar is None:
-            return
         if text:
-            self._set_text(text)
-        self._bar(advance)
+            self.message(text)
+        self.bar(advance)
 
     def message(self, text: str) -> None:
-        if self._bar is not None and text:
-            self._set_text(text)
-
-    def finish(self) -> None:
-        if self._manager is not None:
-            self._manager.__exit__(None, None, None)
-        self._manager = None
-        self._bar = None
-
-    def _set_text(self, text: str) -> None:
-        text_attr = getattr(self._bar, "text", None)
+        if not text:
+            return
+        text_attr = getattr(self.bar, "text", None)
         if callable(text_attr):
             text_attr(text)
 
@@ -301,14 +308,14 @@ def _command_metadata(
     command: str,
     argv: list[str],
     cwd: Path,
-    clock: Clock,
+    opened_at: datetime,
     env_keys: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "command": command,
         "argv": argv,
         "cwd": str(cwd),
-        "timestamp": clock().isoformat(),
+        "timestamp": opened_at.isoformat(),
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,
@@ -324,25 +331,35 @@ def _command_metadata(
 def _git_metadata(cwd: Path) -> dict[str, Any]:
     repo_root = _git(cwd, "rev-parse", "--show-toplevel")
     if repo_root is None:
-        return {
-            "repo_root": None,
-            "commit": None,
-            "short_commit": None,
-            "branch": None,
-            "dirty": False,
-            "status_short": [],
-        }
+        return {"present": False}
     commit = _git(cwd, "rev-parse", "HEAD")
-    branch = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    branch = _git_branch(cwd, commit=commit)
     status_short = (_git(cwd, "status", "--short") or "").splitlines()
+    head = _git_head(commit=commit, branch=branch)
     return {
+        "present": True,
         "repo_root": repo_root,
-        "commit": commit,
-        "short_commit": commit[:8] if commit is not None else None,
-        "branch": branch,
+        "head": head,
         "dirty": bool(status_short),
         "status_short": status_short,
     }
+
+
+def _git_head(*, commit: str | None, branch: str | None) -> dict[str, Any]:
+    if commit is None:
+        return {"kind": "unborn", "branch": branch or "HEAD"}
+    return {
+        "kind": "commit",
+        "commit": commit,
+        "short_commit": commit[:8],
+        "branch": branch or "HEAD",
+    }
+
+
+def _git_branch(cwd: Path, *, commit: str | None) -> str | None:
+    if commit is None:
+        return _git(cwd, "symbolic-ref", "--short", "HEAD")
+    return _git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
 
 
 def _git(cwd: Path, *args: str) -> str | None:
@@ -375,3 +392,10 @@ def _slug(raw: str) -> str:
     chars = [char.lower() if char.isalnum() else "-" for char in raw.strip()]
     slug = "-".join(part for part in "".join(chars).split("-") if part)
     return slug or "command"
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
