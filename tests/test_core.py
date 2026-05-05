@@ -177,7 +177,7 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     assert any("untracked.txt" in entry for entry in git["status_short"])
 
 
-def test_cllg_collects_git_metadata_with_one_root_lookup_and_one_status_call(
+def test_cllg_records_complete_git_metadata_with_small_git_call_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,13 +198,15 @@ def test_cllg_collects_git_metadata_with_one_root_lookup_and_one_status_call(
 
     monkeypatch.setattr("cllg.core.subprocess.run", spy_run)
 
-    with cllg():
+    with cllg() as session:
         pass
 
-    assert calls == [
-        ("rev-parse", "--show-toplevel"),
-        ("status", "--porcelain=v2", "--branch"),
-    ]
+    git = _read_json(session.path / "command.json")["git"]
+    assert git["present"] is True
+    assert git["repo_root"] == str(repo)
+    assert git["head"]["kind"] == "commit"
+    assert git["dirty"] is False
+    assert len(calls) <= 2
 
 
 def test_cllg_logs_events(
