@@ -420,9 +420,27 @@ def test_cllg_restores_streams_after_exception(
 
     assert capfd.readouterr().out == "captured before exception\noutside capture\n"
     events = _read_events(session.path / "events.jsonl")
-    exceptions = _events_of_type(events, "exception")
-    assert len(exceptions) == 1
-    assert exceptions[0]["data"] == {"exception_type": "RuntimeError"}
+    session_ends = _events_of_type(events, "session_end")
+    assert len(session_ends) == 1
+    assert session_ends[0]["text"] == "boom"
+    assert session_ends[0]["data"] == {"exception_type": "RuntimeError"}
+
+
+def test_cllg_emits_session_end_on_clean_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+
+    with cllg() as session:
+        pass
+
+    events = _read_events(session.path / "events.jsonl")
+    session_ends = _events_of_type(events, "session_end")
+    assert len(session_ends) == 1
+    assert session_ends[0]["text"] == ""
+    assert session_ends[0]["data"] == {}
 
 
 def test_cllg_captures_logging_handlers_bound_inside_context(
@@ -506,4 +524,5 @@ def test_non_tty_progress_falls_back_to_logged_events_only(
         "progress_start",
         "progress_advance",
         "progress_finish",
+        "session_end",
     }

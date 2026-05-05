@@ -144,11 +144,13 @@ class LogSession(AbstractContextManager["LogSession"]):
         traceback: TracebackType | None,
     ) -> bool | None:
         try:
-            if exc_value is not None:
+            if exc_value is None:
+                self.event("session_end")
+            else:
                 self.event(
-                    "exception",
+                    "session_end",
                     text=str(exc_value),
-                    data={"exception_type": exc_type.__name__ if exc_type else None},
+                    data={"exception_type": exc_type.__name__},
                 )
         finally:
             self._restore_stdio()
