@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import socket
 import subprocess
@@ -20,20 +19,13 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def open_log_session(
-    *,
-    command: str,
-    argv: list[str] | tuple[str, ...] | None = None,
-    log_root: str | Path = "logs",
-    cwd: str | Path | None = None,
-    clock: Clock = _utc_now,
-    env_keys: tuple[str, ...] = (),
-) -> LogSession:
-    argv_list = list(sys.argv if argv is None else argv)
-    cwd_path = (Path.cwd() if cwd is None else Path(cwd)).resolve()
-    opened_at = clock()
+def cllg() -> LogSession:
+    argv = list(sys.argv)
+    command = _command_from_argv(argv)
+    cwd = Path.cwd().resolve()
+    opened_at = _utc_now()
     path = _unique_run_path(
-        Path(log_root) / opened_at.strftime("%Y-%m-%d"),
+        Path("logs").resolve() / opened_at.strftime("%Y-%m-%d"),
         f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
     )
     path.mkdir(parents=True)
@@ -41,25 +33,35 @@ def open_log_session(
         path / "command.json",
         _command_metadata(
             command=command,
-            argv=argv_list,
-            cwd=cwd_path,
+            argv=argv,
+            cwd=cwd,
             opened_at=opened_at,
-            env_keys=env_keys,
         ),
     )
     (path / "events.jsonl").touch()
+    (path / "stdout.txt").touch()
+    (path / "stderr.txt").touch()
     return LogSession(
         path=path,
-        clock=clock,
     )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class LogSession(AbstractContextManager["LogSession"]):
     path: Path
     clock: Clock = _utc_now
+    _original_stdout: TextIO | None = None
+    _original_stderr: TextIO | None = None
+    _stdout_file: TextIO | None = None
+    _stderr_file: TextIO | None = None
 
     def __enter__(self) -> LogSession:
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        self._stdout_file = (self.path / "stdout.txt").open("a", encoding="utf-8")
+        self._stderr_file = (self.path / "stderr.txt").open("a", encoding="utf-8")
+        sys.stdout = _TeeTextIO(self._original_stdout, self._stdout_file)  # type: ignore[assignment]
+        sys.stderr = _TeeTextIO(self._original_stderr, self._stderr_file)  # type: ignore[assignment]
         return self
 
     def __exit__(
@@ -68,12 +70,15 @@ class LogSession(AbstractContextManager["LogSession"]):
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if exc_value is not None:
-            self.event(
-                "exception",
-                text=str(exc_value),
-                data={"exception_type": exc_type.__name__ if exc_type else None},
-            )
+        try:
+            if exc_value is not None:
+                self.event(
+                    "exception",
+                    text=str(exc_value),
+                    data={"exception_type": exc_type.__name__ if exc_type else None},
+                )
+        finally:
+            self._restore_stdio()
         return None
 
     def event(
@@ -94,37 +99,15 @@ class LogSession(AbstractContextManager["LogSession"]):
         with (self.path / "events.jsonl").open("a", encoding="utf-8") as file:
             file.write(json.dumps(event, sort_keys=True) + "\n")
 
-    def write_json_artifact(self, name: str, payload: Any) -> Path:
-        path = self._artifact_path(name)
-        _write_json(path, payload)
-        self.event("artifact", text=name, data={"path": str(path)})
-        return path
-
-    @contextmanager
-    def capture_stdio(self) -> Iterator[None]:
-        stdout_path = self.path / "stdout.txt"
-        stderr_path = self.path / "stderr.txt"
-        original_stdout = sys.stdout
-        original_stderr = sys.stderr
-        with stdout_path.open("a", encoding="utf-8") as stdout_file, stderr_path.open(
-            "a",
-            encoding="utf-8",
-        ) as stderr_file:
-            sys.stdout = _TeeTextIO(original_stdout, stdout_file)  # type: ignore[assignment]
-            sys.stderr = _TeeTextIO(original_stderr, stderr_file)  # type: ignore[assignment]
-            try:
-                yield
-            finally:
-                sys.stdout = original_stdout
-                sys.stderr = original_stderr
-
-    def _artifact_path(self, name: str) -> Path:
-        relative = Path(name)
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"artifact name must be relative to the log session: {name!r}")
-        path = self.path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return path
+    def _restore_stdio(self) -> None:
+        if self._original_stdout is not None:
+            sys.stdout = self._original_stdout
+        if self._original_stderr is not None:
+            sys.stderr = self._original_stderr
+        if self._stdout_file is not None:
+            self._stdout_file.close()
+        if self._stderr_file is not None:
+            self._stderr_file.close()
 
 
 class _TeeTextIO:
@@ -368,7 +351,6 @@ def _command_metadata(
     argv: list[str],
     cwd: Path,
     opened_at: datetime,
-    env_keys: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "command": command,
@@ -382,7 +364,7 @@ def _command_metadata(
         },
         "platform": platform.platform(),
         "hostname": socket.gethostname(),
-        "env": {key: os.environ[key] for key in env_keys if key in os.environ},
+        "env": {},
         "git": _git_metadata(cwd),
     }
 
@@ -451,6 +433,12 @@ def _slug(raw: str) -> str:
     chars = [char.lower() if char.isalnum() else "-" for char in raw.strip()]
     slug = "-".join(part for part in "".join(chars).split("-") if part)
     return slug or "command"
+
+
+def _command_from_argv(argv: list[str]) -> str:
+    if not argv:
+        return "command"
+    return Path(argv[0]).name or "command"
 
 
 def _write_json(path: Path, payload: Any) -> None:

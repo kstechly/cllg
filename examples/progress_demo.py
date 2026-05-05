@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 import time
 
-from cllg import make_progress, open_log_session
+from cllg import cllg, make_progress
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Show cllg progress behavior.")
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--log-root", default="logs")
     parser.add_argument("--steps", type=_positive_int, default=8)
     parser.add_argument("--delay", type=_non_negative_float, default=0.08)
     return parser
@@ -19,22 +17,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with open_log_session(
-        command="progress-demo",
-        argv=sys.argv if argv is None else ["progress_demo.py", *argv],
-        log_root=args.log_root,
-    ) as session:
-        progress = make_progress(session=session, json_mode=args.json)
+    with cllg() as log:
+        progress = make_progress(session=log, json_mode=args.json)
         with progress.task("demo work", total=args.steps) as task:
             for index in range(args.steps):
                 time.sleep(args.delay)
                 task.update(text=f"item {index + 1}/{args.steps}")
-        payload = {"ok": True, "log_dir": str(session.path), "steps": args.steps}
-        session.write_json_artifact("result.json", payload)
+        payload = {"ok": True, "steps": args.steps}
         if args.json:
             print(json.dumps(payload, sort_keys=True))
         else:
-            print(session.path)
+            print(f"processed {args.steps} steps")
     return 0
 
 

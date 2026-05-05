@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import sys
-
-from cllg import open_log_session
+from cllg import cllg
 
 
 def main() -> int:
-    with open_log_session(command="basic-session", argv=sys.argv) as session:
-        session.event("message", text="starting example")
-        session.write_json_artifact(
-            "run_record.json",
-            {"example": "basic_session", "stop_reason": "complete"},
-        )
-        print(session.path)
+    with cllg() as log:
+        print("starting example")
+        print("complete")
+        log.event("message", text="starting example")
+        log.event("message", text="completed example")
     return 0
 
 

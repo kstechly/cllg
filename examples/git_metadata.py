@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-import sys
 
-from cllg import open_log_session
+from cllg import cllg
 
 
 def main() -> int:
-    with open_log_session(command="git-metadata", argv=sys.argv) as session:
+    with cllg() as session:
         command = json.loads((session.path / "command.json").read_text(encoding="utf-8"))
         print(json.dumps(command["git"], indent=2, sort_keys=True))
     return 0

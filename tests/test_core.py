@@ -10,16 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from cllg import make_progress, open_log_session
+from cllg import cllg, make_progress
 
 
 class FakeTty(io.StringIO):
     def isatty(self) -> bool:
         return True
-
-
-def _fixed_clock() -> datetime:
-    return datetime(2026, 5, 5, 14, 12, 33, tzinfo=timezone.utc)
 
 
 def _read_json(path: Path) -> object:
@@ -53,40 +49,46 @@ def _init_git_repo(repo: Path) -> None:
     _git(repo, "commit", "-m", "initial")
 
 
-def test_session_creates_dated_run_directory_and_command_metadata(tmp_path: Path) -> None:
-    log_root = tmp_path / "logs"
-    with open_log_session(
-        command="smoke",
-        argv=["smoke", "fixed"],
-        log_root=log_root,
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
+def _fixed_clock() -> datetime:
+    return datetime(2026, 5, 5, 14, 12, 33, tzinfo=timezone.utc)
+
+
+def test_cllg_creates_run_directory_and_command_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["/usr/local/bin/smoke", "fixed", "--json"])
+    monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
+
+    with cllg() as session:
         assert session.path.is_dir()
-        assert session.path.parent == log_root / "2026-05-05"
+        assert session.path.parent == tmp_path / "logs" / "2026-05-05"
         assert session.path.name.startswith("141233-smoke")
 
     command = _read_json(session.path / "command.json")
 
     assert command["command"] == "smoke"
-    assert command["argv"] == ["smoke", "fixed"]
+    assert command["argv"] == ["/usr/local/bin/smoke", "fixed", "--json"]
     assert command["cwd"] == str(tmp_path)
     assert command["git"] == {"present": False}
+    assert (session.path / "events.jsonl").is_file()
+    assert (session.path / "stdout.txt").is_file()
+    assert (session.path / "stderr.txt").is_file()
 
 
-def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
+def test_cllg_records_git_commit_and_dirty_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_git_repo(repo)
     (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "argv", ["game"])
 
-    with open_log_session(
-        command="game",
-        argv=["game"],
-        log_root=tmp_path / "logs",
-        cwd=repo,
-        clock=_fixed_clock,
-    ) as session:
+    with cllg() as session:
         pass
 
     command = _read_json(session.path / "command.json")
@@ -103,19 +105,18 @@ def test_session_records_git_commit_and_dirty_state(tmp_path: Path) -> None:
     assert any("tracked.txt" in entry for entry in git["status_short"])
 
 
-def test_session_records_unborn_git_repo_without_fake_commit(tmp_path: Path) -> None:
+def test_cllg_records_unborn_git_repo_without_fake_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
     (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "argv", ["game"])
 
-    with open_log_session(
-        command="game",
-        argv=["game"],
-        log_root=tmp_path / "logs",
-        cwd=repo,
-        clock=_fixed_clock,
-    ) as session:
+    with cllg() as session:
         pass
 
     git = _read_json(session.path / "command.json")["git"]
@@ -126,45 +127,38 @@ def test_session_records_unborn_git_repo_without_fake_commit(tmp_path: Path) -> 
     assert any("untracked.txt" in entry for entry in git["status_short"])
 
 
-def test_session_writes_json_artifacts_and_jsonl_events(tmp_path: Path) -> None:
-    with open_log_session(
-        command="smoke",
-        argv=["smoke"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
-        session.event("message", text="starting", data={"replication": 0})
-        session.write_json_artifact("run_record.json", {"stop_reason": "step_limit"})
+def test_cllg_logs_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
 
-    assert _read_json(session.path / "run_record.json") == {"stop_reason": "step_limit"}
+    with cllg() as session:
+        session.event("message", text="starting", data={"replication": 0})
+
     events = _read_events(session.path / "events.jsonl")
     assert events[0]["type"] == "message"
     assert events[0]["text"] == "starting"
     assert events[0]["data"] == {"replication": 0}
 
 
-def test_capture_stdio_writes_stdout_and_stderr_while_forwarding(
+def test_cllg_automatically_captures_stdout_and_stderr_while_forwarding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stdout = io.StringIO()
     forwarded_stderr = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
 
-    with open_log_session(
-        command="capture",
-        argv=["capture"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
-        with session.capture_stdio():
-            print("stdout print")
-            sys.stdout.write("stdout write\n")
-            print("stderr print", file=sys.stderr)
-            sys.stderr.write("stderr write\n")
+    with cllg() as session:
+        print("stdout print")
+        sys.stdout.write("stdout write\n")
+        print("stderr print", file=sys.stderr)
+        sys.stderr.write("stderr write\n")
 
     expected_stdout = "stdout print\nstdout write\n"
     expected_stderr = "stderr print\nstderr write\n"
@@ -174,88 +168,58 @@ def test_capture_stdio_writes_stdout_and_stderr_while_forwarding(
     assert (session.path / "stderr.txt").read_text(encoding="utf-8") == expected_stderr
 
 
-def test_capture_stdio_restores_streams_after_exception(
+def test_cllg_restores_streams_after_exception(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stdout = io.StringIO()
     forwarded_stderr = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stdout", forwarded_stdout)
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
 
-    with open_log_session(
-        command="capture",
-        argv=["capture"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
-        with pytest.raises(RuntimeError, match="boom"):
-            with session.capture_stdio():
-                print("captured before exception")
-                raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        with cllg() as session:
+            print("captured before exception")
+            raise RuntimeError("boom")
 
-        assert sys.stdout is forwarded_stdout
-        assert sys.stderr is forwarded_stderr
-        print("outside capture")
+    assert sys.stdout is forwarded_stdout
+    assert sys.stderr is forwarded_stderr
+    print("outside capture")
 
     assert forwarded_stdout.getvalue() == "captured before exception\noutside capture\n"
     assert (
         session.path / "stdout.txt"
     ).read_text(encoding="utf-8") == "captured before exception\n"
     assert (session.path / "stderr.txt").read_text(encoding="utf-8") == ""
+    events = _read_events(session.path / "events.jsonl")
+    assert events[-1]["type"] == "exception"
+    assert events[-1]["data"] == {"exception_type": "RuntimeError"}
 
 
-def test_capture_stdio_keeps_json_printed_after_capture_out_of_stdout_artifact(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    forwarded_stdout = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
-
-    with open_log_session(
-        command="capture",
-        argv=["capture"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
-        with session.capture_stdio():
-            print("human chatter")
-        payload = {"ok": True, "log_dir": str(session.path)}
-        print(json.dumps(payload, sort_keys=True))
-
-    assert json.loads(forwarded_stdout.getvalue().splitlines()[-1])["ok"] is True
-    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == "human chatter\n"
-
-
-def test_capture_stdio_captures_logging_handlers_bound_inside_capture(
+def test_cllg_captures_logging_handlers_bound_inside_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     forwarded_stderr = io.StringIO()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["capture"])
     monkeypatch.setattr(sys, "stderr", forwarded_stderr)
-    logger = logging.getLogger("cllg.tests.capture_stdio")
+    logger = logging.getLogger("cllg.tests.capture")
     logger.handlers.clear()
     logger.propagate = False
     logger.setLevel(logging.INFO)
 
-    with open_log_session(
-        command="capture",
-        argv=["capture"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
-        with session.capture_stdio():
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
-            logger.addHandler(handler)
-            try:
-                logger.info("captured log")
-            finally:
-                logger.removeHandler(handler)
-                handler.close()
+    with cllg() as session:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+        logger.addHandler(handler)
+        try:
+            logger.info("captured log")
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
 
     expected = "INFO:captured log\n"
     assert forwarded_stderr.getvalue() == expected
@@ -264,15 +228,12 @@ def test_capture_stdio_captures_logging_handlers_bound_inside_capture(
 
 def test_progress_events_are_logged_without_terminal_output_in_json_mode(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = FakeTty()
-    with open_log_session(
-        command="smoke",
-        argv=["smoke"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+    with cllg() as session:
         progress = make_progress(session=session, json_mode=True, stream=stream)
         with progress.task("smoke fixed limerick", total=2) as task:
             task.message("loaded")
@@ -290,15 +251,14 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
     assert events[-1]["current"] == 2
 
 
-def test_non_tty_progress_falls_back_to_logged_events_only(tmp_path: Path) -> None:
+def test_non_tty_progress_falls_back_to_logged_events_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stream = io.StringIO()
-    with open_log_session(
-        command="batch",
-        argv=["batch"],
-        log_root=tmp_path / "logs",
-        cwd=tmp_path,
-        clock=_fixed_clock,
-    ) as session:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["batch"])
+    with cllg() as session:
         progress = make_progress(session=session, json_mode=False, stream=stream)
         with progress.task("batch", total=1) as task:
             task.update(text="done")
