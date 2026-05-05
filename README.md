@@ -1,24 +1,28 @@
 # cllg
 
-Opinionated persistent debug logging and dual-mode output for Python CLI commands.
+Opinionated persistent debug logging and structured print replacement for
+Python CLI commands.
 
 ```python
-from cllg import cllg, output
+import cllg
 
-with cllg():
-    output(human="processed 3 items", agent={"ok": True, "items": 3})
+with cllg.cllg():
+    cllg.print(human="processed 3 items", agent={"ok": True, "items": 3})
 ```
 
 `cllg()` must run inside a git repository. It creates a timestamped run
 directory under the repository root's `logs/` directory, writes invocation
-metadata, and tees stdout/stderr into log files without changing
-what the command prints. Running from a subdirectory still writes to the repo
-root, not the process working directory.
+metadata, and tees stdout/stderr into log files without changing what the
+command prints. Running from a subdirectory still writes to the repo root, not
+the process working directory.
 
 ## What Gets Logged
 
-- `command.json`: argv, derived command name, cwd, `started_at`, `ended_at` (null until the session closes cleanly), Python/platform/host metadata, allowlisted environment metadata, and git state.
-- `events.jsonl`: structured debug timeline events.
+- `command.json`: argv, derived command name, cwd, `started_at`, `ended_at`
+  (null until the session closes cleanly), exception metadata, Python/platform/
+  host metadata, allowlisted environment metadata, and git state.
+- `prints.jsonl`: structured records for `cllg.print(...)` calls plus a single
+  progress marker when `progress(...)` opens.
 - `stdout.out`: stdout bytes emitted inside the context.
 - `stderr.err`: stderr bytes emitted inside the context.
 
@@ -35,49 +39,27 @@ session log contains its own slice.
 `stdout.out` and `stderr.err` preserve output bytes. Invalid UTF-8 bytes are not
 rewritten or dropped.
 
-`command.json` does not dump the full process environment. Its `env` field is
-self-describing:
+## Structured Print
 
-```json
-{
-  "kind": "allowlist",
-  "values": {
-    "CUDA_VISIBLE_DEVICES": "0,1",
-    "MASTER_ADDR": "127.0.0.1",
-    "PATH": "/usr/bin",
-    "TORCH_HOME": "/models/torch",
-    "WORLD_SIZE": "8"
-  }
-}
-```
-
-The allowlist covers common execution-context variables: `PATH`, `PYTHONPATH`,
-virtualenv/conda/uv markers, CUDA/NVIDIA settings, PyTorch cache/debug settings,
-NCCL settings, torchrun/distributed rank settings, and common thread-count
-settings. Secrets and arbitrary environment variables are intentionally not
-logged.
-
-If the current working directory is not inside a git repository, `cllg()` raises
-before creating a log directory. That is intentional: logs are repo-local debug
-history, and silently writing wherever the shell happens to be is brittle
-garbage.
-
-## Output
-
-Use `output(human=..., agent=...)` instead of `print(...)` for command results
-that need to be useful to both people and agents.
+Use `cllg.print(human=..., agent=...)` where you would otherwise use
+`print(...)` for command narration or results that should be useful to both
+people and agents.
 
 ```python
-from cllg import output
-
-output(
+cllg.print(
     human="epoch 3/10 loss=0.410",
     agent={"event": "epoch", "epoch": 3, "epochs": 10, "loss": 0.410},
 )
 ```
 
-Human mode prints the human string. `--json` mode prints the agent object as
-stable JSON. Inside `cllg()`, output calls are also recorded in `events.jsonl`.
+Human mode prints the human string. `--json` mode prints the agent object as one
+stable JSON line. Multiple `cllg.print(...)` calls in `--json` mode produce
+JSONL on stdout.
+
+Inside `cllg()`, every `cllg.print(...)` call is also appended to
+`prints.jsonl` with `kind`, `timestamp`, `human`, and `agent` fields. Deep code
+can call `cllg.print(...)` directly; it finds the active session from context,
+so you do not need to thread a logger through the call stack.
 
 `human` must be a string. `agent` must be a JSON-serializable object with string
 keys. `cllg` validates before printing, so bad agent payloads fail before
@@ -89,9 +71,9 @@ polluting stdout with broken machine output.
 `log` parameter.
 
 ```python
-from cllg import progress
+import cllg
 
-with progress("training", total=epochs) as task:
+with cllg.progress("training", total=epochs) as task:
     for epoch in range(epochs):
         loss = train_epoch(epoch)
         task.update(
@@ -100,118 +82,22 @@ with progress("training", total=epochs) as task:
         )
 ```
 
-The important shape is that only the CLI boundary needs `cllg()`. The training
-loop can live in normal imported code and still use `progress(...)` directly:
-
-```python
-from cllg import cllg, output, progress
-
-
-def main() -> int:
-    with cllg():
-        loss = train_model(epochs=10)
-        output(
-            human=f"training complete loss={loss:.3f}",
-            agent={"ok": True, "loss": loss},
-        )
-    return 0
-
-
-def train_model(*, epochs: int) -> float:
-    loss = 1.0
-    with progress("training", total=epochs) as task:
-        task.message(
-            human="initialized training loop",
-            agent={"event": "training_initialized", "epochs": epochs},
-        )
-        for epoch in range(1, epochs + 1):
-            loss = train_epoch(epoch, loss)
-            task.update(
-                human=f"epoch {epoch}/{epochs} loss={loss:.3f}",
-                agent={"event": "epoch", "epoch": epoch, "loss": loss},
-            )
-    return loss
-```
-
-See `examples/training_loop.py` for a runnable version.
-
-In `--json` mode progress is logged but not painted to the terminal. In human
-TTY mode it uses `alive-progress`. When `progress(...)` runs inside `cllg()`,
-TTY detection uses the original stderr state from before fd-level capture, so
-progress bars still paint on a real terminal.
-
-`progress(...)` also works outside `cllg()`. In that case it can still paint
-human progress when stderr is a TTY, but it has no active session, so it does
-not append progress events to `events.jsonl`.
-
-### Progress API
-
-`progress(title, total=None, stream=None)` returns a context manager. `title`
-names the progress task. `total` is the expected number of updates, or `None`
-for open-ended work. `stream` defaults to `sys.stderr`.
-
-Inside the context, `task.message(...)` records or displays a status message
-without advancing the counter:
-
-```python
-task.message(
-    human="loaded dataset",
-    agent={"event": "dataset_loaded", "rows": 1200},
-)
-```
-
-`task.update(...)` advances the counter. `advance` defaults to `1`.
-
-```python
-task.update(
-    human="epoch 3/10 loss=0.410",
-    agent={"event": "epoch", "epoch": 3, "epochs": 10, "loss": 0.410},
-)
-```
-
-Both methods validate `agent` as a JSON-serializable object with string keys.
-Use `message(...)` for a checkpoint that does not represent completed work; use
-`update(...)` when the task made measurable progress.
-
-### Progress Events
-
-When a progress task runs inside `cllg()`, `events.jsonl` receives these event
-types:
-
-- `progress_start`: emitted when the progress context opens.
-- `progress_message`: emitted by `task.message(...)`.
-- `progress_advance`: emitted by `task.update(...)`.
-- `progress_finish`: emitted when the progress context exits.
-
-All progress events include:
-
-- `type`: one of the event types above.
-- `timestamp`: ISO-8601 UTC timestamp.
-- `text`: the human text for the event.
-- `data`: the agent payload, or `{}`.
-
-Progress events also include task counters:
-
-- `current`: current completed count.
-- `total`: configured total, or `null`.
-- `advance`: only on `progress_advance`, the amount added by that update.
-
-Example `progress_advance` line:
-
-```json
-{"advance": 1, "current": 3, "data": {"epoch": 3, "event": "epoch", "loss": 0.41}, "text": "epoch 3/10 loss=0.410", "timestamp": "2026-05-05T14:12:33+00:00", "total": 10, "type": "progress_advance"}
-```
+In human TTY mode, progress uses `alive-progress`. In `--json` mode, progress
+does not stream every update to stdout. Instead, opening a progress context
+appends one `kind: "progress"` marker to `prints.jsonl` with the title and total
+so machine consumers know to inspect the log artifacts if they need progress
+detail.
 
 ## Migrating From Print
 
 For a CLI command, start by wrapping the command body:
 
 ```python
-from cllg import cllg
+import cllg
 
 
 def main() -> int:
-    with cllg():
+    with cllg.cllg():
         run_command()
     return 0
 ```
@@ -221,26 +107,22 @@ preserving normal terminal output. This includes Python text writes, Python
 buffer writes, stdout/stderr logging handlers, and subprocess output inherited
 on standard file descriptors.
 
-Then replace result-producing prints with `output(...)`:
+Then replace important prints with `cllg.print(...)`:
 
 ```python
 # Before
 print(f"processed {count} items")
 
 # After
-output(
+cllg.print(
     human=f"processed {count} items",
     agent={"ok": True, "items": count},
 )
 ```
 
-Use `progress(...)` for loops and long-running work, including code below the
-CLI boundary. Do not pass a `log` object through the call stack just to report
-progress.
-
 Raw prints are still captured inside `cllg()`, so migration can be incremental.
-The point of `output(...)` is not logging; it is keeping human output and
-machine-readable `--json` output under one validated API.
+The point of `cllg.print(...)` is keeping human output and machine-readable
+`--json` output under one validated API.
 
 ## Consumer Linting
 
@@ -261,16 +143,16 @@ Then run:
 uv run ruff check .
 ```
 
-`cllg` itself intentionally contains print calls in its internals and tests;
-the Ruff rule belongs in consumer repositories.
+`cllg` itself intentionally contains print calls in its internals and tests; the
+Ruff rule belongs in consumer repositories.
 
 ## Examples
 
 ```bash
 uv run python examples/basic_session.py
 uv run python examples/progress_demo.py
-uv run python examples/training_loop.py --json | uv run python -m json.tool
-uv run python examples/command_vs_events.py
-uv run python examples/json_mode.py --json | uv run python -m json.tool
+uv run python examples/training_loop.py --json
+uv run python examples/command_vs_prints.py
+uv run python examples/json_mode.py --json
 uv run python examples/git_metadata.py
 ```

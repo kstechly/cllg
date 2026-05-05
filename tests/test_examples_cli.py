@@ -11,16 +11,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _read_events(path: Path) -> list[dict[str, object]]:
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [
         json.loads(line)
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-
-
-def _events_of_type(events: list[dict[str, object]], event_type: str) -> list[dict[str, object]]:
-    return [event for event in events if event["type"] == event_type]
 
 
 def _json_stdout(completed: subprocess.CompletedProcess[str]) -> dict[str, object]:
@@ -165,15 +161,14 @@ def test_progress_demo_json_mode_keeps_stdout_machine_parseable(
     )
     payload = _json_stdout(completed)
     log_dir = _only_log_dir(tmp_path)
-    events = _read_events(log_dir / "events.jsonl")
+    records = _read_jsonl(log_dir / "prints.jsonl")
 
     assert completed.stderr == ""
     assert payload["ok"] is True
     assert payload["steps"] == 2
     assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
-    assert len(_events_of_type(events, "progress_advance")) == 2
-    assert _events_of_type(events, "progress_start")
-    assert _events_of_type(events, "progress_finish")
+    assert [record["kind"] for record in records] == ["progress", "print"]
+    assert records[0]["agent"]["event"] == "progress_start"
 
 
 def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
@@ -190,35 +185,33 @@ def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
     )
     payload = _json_stdout(completed)
     log_dir = _only_log_dir(tmp_path)
-    events = _read_events(log_dir / "events.jsonl")
+    records = _read_jsonl(log_dir / "prints.jsonl")
 
     assert completed.stderr == ""
     assert payload["ok"] is True
     assert payload["epochs"] == 2
     assert (log_dir / "stdout.out").read_text(encoding="utf-8") == completed.stdout
-    assert _events_of_type(events, "progress_message")
-    assert len(_events_of_type(events, "progress_advance")) == 2
+    assert [record["kind"] for record in records] == ["progress", "print"]
+    assert records[0]["agent"]["event"] == "progress_start"
 
 
-def test_command_vs_events_example_shows_static_metadata_and_timeline(
+def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
     tmp_path: Path,
 ) -> None:
-    completed = _run_example(tmp_path, "command_vs_events.py", "--json")
+    completed = _run_example(tmp_path, "command_vs_prints.py", "--json")
     payload = _json_stdout(completed)
     log_dir = _only_log_dir(tmp_path)
     command_path = log_dir / str(payload["command"]["file"])
-    events_path = log_dir / str(payload["events"]["file"])
-    events = _read_events(events_path)
+    prints_path = log_dir / str(payload["prints"]["file"])
+    records = _read_jsonl(prints_path)
 
     assert completed.stderr == ""
     assert command_path.is_file()
-    assert events_path.is_file()
-    assert payload["command"]["command"] == "command_vs_events.py"
-    assert payload["events"]["count"] == len(payload["events"]["types"])
-    assert {"progress_start", "progress_advance", "progress_finish"} <= set(
-        payload["events"]["types"]
-    )
-    assert _events_of_type(events, "output")
+    assert prints_path.is_file()
+    assert payload["command"]["command"] == "command_vs_prints.py"
+    assert payload["prints"]["count"] == len(payload["prints"]["kinds"])
+    assert "progress" in payload["prints"]["kinds"]
+    assert "print" in [record["kind"] for record in records]
 
 
 def test_fd_capture_logs_buffer_logging_and_subprocess_output(

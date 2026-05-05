@@ -4,38 +4,37 @@ import argparse
 import json
 from pathlib import Path
 
-from cllg import cllg, output, progress
+import cllg
 
 
 COMMAND_PURPOSE = "one invocation metadata snapshot"
-EVENTS_PURPOSE = "append-only timeline of what happened"
+PRINTS_PURPOSE = "append-only structured cllg.print records"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Show command.json vs events.jsonl.")
+    parser = argparse.ArgumentParser(description="Show command.json vs prints.jsonl.")
     parser.add_argument("--json", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg() as log:
-        log.event("message", text="command.json already exists")
-        with progress("write timeline", total=1) as task:
+    with cllg.cllg() as log:
+        with cllg.progress("write timeline", total=1) as task:
             task.update(
-                human="events.jsonl is growing",
-                agent={"event": "events_jsonl_growing"},
+                human="progress marker recorded",
+                agent={"event": "progress_marker_recorded"},
             )
         payload = _payload(log.path)
-        output(human=_human_payload(payload), agent=payload)
+        cllg.print(human=_human_payload(payload), agent=payload)
     return 0
 
 
 def _payload(log_dir: Path) -> dict[str, object]:
     command = json.loads((log_dir / "command.json").read_text(encoding="utf-8"))
-    events = [
+    prints = [
         json.loads(line)
-        for line in (log_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (log_dir / "prints.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     return {
@@ -46,23 +45,23 @@ def _payload(log_dir: Path) -> dict[str, object]:
             "argv": command["argv"],
             "git_present": command["git"]["present"],
         },
-        "events": {
-            "file": "events.jsonl",
-            "purpose": EVENTS_PURPOSE,
-            "count": len(events),
-            "types": [event["type"] for event in events],
+        "prints": {
+            "file": "prints.jsonl",
+            "purpose": PRINTS_PURPOSE,
+            "count": len(prints),
+            "kinds": [record["kind"] for record in prints],
         },
     }
 
 
 def _human_payload(payload: dict[str, object]) -> str:
-    events = payload["events"]
-    assert isinstance(events, dict)
+    prints = payload["prints"]
+    assert isinstance(prints, dict)
     return "\n".join(
         [
             f"command.json: {COMMAND_PURPOSE}",
-            f"events.jsonl: {EVENTS_PURPOSE}",
-            f"events: {events['count']}",
+            f"prints.jsonl: {PRINTS_PURPOSE}",
+            f"prints: {prints['count']}",
         ]
     )
 

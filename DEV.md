@@ -1,6 +1,6 @@
 # cllg Development Notes
 
-`cllg` is intentionally opinionated. It is a tiny CLI logging/output contract,
+`cllg` is intentionally opinionated. It is a tiny CLI logging/print contract,
 not a general logging framework, and it should not collect knobs for imagined
 edge cases.
 
@@ -10,13 +10,14 @@ edge cases.
 
 - creates repo-local persistent debug logs;
 - tees stdout/stderr without stopping normal printing;
-- records command metadata and structured timeline events;
-- makes human/agent command output boring to consume.
+- records command metadata and structured print records;
+- makes human/agent command printing boring to consume.
 
 Correct defaults are the product. Running outside a git repository is an error.
-stdout/stderr capture is on when `cllg()` is active. `--json` changes rendering,
-not whether logging exists. `progress(...)` and `output(...)` find the active
-session from context, so deep code does not need a `log` parameter.
+stdout/stderr capture is on when `cllg()` is active. `--json` changes
+`cllg.print(...)` rendering to JSONL, not whether logging exists.
+`progress(...)` and `cllg.print(...)` find the active session from context, so
+deep code does not need a `log` parameter.
 
 Avoid flags like `capture_stdio=True`, `capture_logging=True`, or
 `use_context_progress=True`. Those are usually design backsliding unless a real
@@ -69,8 +70,8 @@ token, credential, key, secret, password, or auth variables.
 
 Test behavior and stable contracts. Delete brittle garbage.
 
-Good tests run example CLIs, parse JSON stdout, assert `stdout.out` and
-`stderr.err` match user-visible output, inspect structured events, and verify
+Good tests run example CLIs, parse JSONL stdout, assert `stdout.out` and
+`stderr.err` match user-visible output, inspect structured print records, and verify
 command metadata such as repo root, dirty state, and allowlisted env values.
 
 Bad tests assert private class names, exact prose/docs snapshots, fake known
@@ -83,7 +84,7 @@ Docs should explain the CLI migration:
 
 - wrap the CLI boundary with `with cllg():`;
 - leave ordinary deep code mostly ordinary;
-- use `output(...)` for command results;
+- use `cllg.print(...)` where the CLI would otherwise print;
 - use `progress(...)` for loops and long-running work;
 - rely on capture for incidental stdout/stderr during migration.
 

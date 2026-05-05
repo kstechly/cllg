@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from cllg import cllg, output, progress
+import cllg as cllg_pkg
+from cllg import cllg, progress
 from cllg.core import _unique_run_path
 
 
@@ -23,16 +24,12 @@ def _read_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _read_events(path: Path) -> list[dict[str, object]]:
+def _read_prints(path: Path) -> list[dict[str, object]]:
     return [
         json.loads(line)
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-
-
-def _events_of_type(events: list[dict[str, object]], event_type: str) -> list[dict[str, object]]:
-    return [event for event in events if event["type"] == event_type]
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -111,9 +108,83 @@ def test_cllg_creates_run_directory_and_command_metadata(
     assert command["argv"] == ["/usr/local/bin/smoke", "fixed", "--json"]
     assert command["cwd"] == str(repo)
     assert command["git"]["present"] is True
-    assert (session.path / "events.jsonl").is_file()
+    assert (session.path / "prints.jsonl").is_file()
+    assert not (session.path / "events.jsonl").exists()
     assert (session.path / "stdout.out").is_file()
     assert (session.path / "stderr.err").is_file()
+
+
+def test_cllg_print_replaces_print_and_records_prints_jsonl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["command"])
+
+    with cllg() as session:
+        cllg_pkg.print(human="processed 3 items", agent={"ok": True, "items": 3})
+
+    assert capfd.readouterr().out == "processed 3 items\n"
+    records = _read_prints(session.path / "prints.jsonl")
+    assert records == [
+        {
+            "agent": {"items": 3, "ok": True},
+            "human": "processed 3 items",
+            "kind": "print",
+            "timestamp": records[0]["timestamp"],
+        }
+    ]
+
+
+def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["command", "--json"])
+
+    with cllg() as session:
+        cllg_pkg.print(human="one", agent={"event": "one"})
+        cllg_pkg.print(human="two", agent={"event": "two"})
+
+    assert [json.loads(line) for line in capfd.readouterr().out.splitlines()] == [
+        {"event": "one"},
+        {"event": "two"},
+    ]
+    assert [record["agent"] for record in _read_prints(session.path / "prints.jsonl")] == [
+        {"event": "one"},
+        {"event": "two"},
+    ]
+
+
+def test_cllg_print_deep_code_uses_active_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def deep_print() -> None:
+        cllg_pkg.print(human="deep", agent={"scope": "deep"})
+
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["command"])
+
+    with cllg() as session:
+        deep_print()
+
+    records = _read_prints(session.path / "prints.jsonl")
+    assert [record["agent"] for record in records] == [{"scope": "deep"}]
+
+
+def test_session_has_no_public_event_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["command"])
+
+    with cllg() as session:
+        assert not hasattr(session, "event")
 
 
 def test_unique_run_path_creates_distinct_dirs_under_same_stem(
@@ -265,24 +336,7 @@ def test_cllg_records_complete_git_metadata_with_small_git_call_budget(
     assert len(calls) <= 2
 
 
-def test_cllg_logs_events(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
-
-    with cllg() as session:
-        session.event("message", text="starting", data={"replication": 0})
-
-    events = _read_events(session.path / "events.jsonl")
-    messages = _events_of_type(events, "message")
-    assert len(messages) == 1
-    assert messages[0]["text"] == "starting"
-    assert messages[0]["data"] == {"replication": 0}
-
-
-def test_nested_output_events_go_to_the_active_session(
+def test_nested_print_records_go_to_the_active_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,17 +345,17 @@ def test_nested_output_events_go_to_the_active_session(
 
     with cllg() as outer:
         with cllg() as inner:
-            output(human="inner", agent={"scope": "inner"})
-        output(human="outer", agent={"scope": "outer"})
+            cllg_pkg.print(human="inner", agent={"scope": "inner"})
+        cllg_pkg.print(human="outer", agent={"scope": "outer"})
 
-    outer_outputs = _events_of_type(_read_events(outer.path / "events.jsonl"), "output")
-    inner_outputs = _events_of_type(_read_events(inner.path / "events.jsonl"), "output")
+    outer_outputs = _read_prints(outer.path / "prints.jsonl")
+    inner_outputs = _read_prints(inner.path / "prints.jsonl")
 
-    assert [event["data"] for event in outer_outputs] == [{"scope": "outer"}]
-    assert [event["data"] for event in inner_outputs] == [{"scope": "inner"}]
+    assert [record["agent"] for record in outer_outputs] == [{"scope": "outer"}]
+    assert [record["agent"] for record in inner_outputs] == [{"scope": "inner"}]
 
 
-def test_output_prints_human_text_and_records_event_inside_cllg(
+def test_session_print_method_records_to_prints_jsonl(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -310,18 +364,17 @@ def test_output_prints_human_text_and_records_event_inside_cllg(
     monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg() as session:
-        output(human="processed 3 items", agent={"ok": True, "items": 3})
+        session.print(human="processed 3 items", agent={"ok": True, "items": 3})
 
     captured = capfd.readouterr()
     assert captured.out == "processed 3 items\n"
-    events = _read_events(session.path / "events.jsonl")
-    outputs = _events_of_type(events, "output")
-    assert len(outputs) == 1
-    assert outputs[0]["text"] == "processed 3 items"
-    assert outputs[0]["data"] == {"ok": True, "items": 3}
+    records = _read_prints(session.path / "prints.jsonl")
+    assert len(records) == 1
+    assert records[0]["human"] == "processed 3 items"
+    assert records[0]["agent"] == {"ok": True, "items": 3}
 
 
-def test_output_prints_agent_json_in_json_mode(
+def test_print_prints_agent_json_in_json_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -330,13 +383,13 @@ def test_output_prints_agent_json_in_json_mode(
     monkeypatch.setattr(sys, "argv", ["command", "--json"])
 
     with cllg() as session:
-        output(human="processed 3 items", agent={"items": 3, "ok": True})
+        cllg_pkg.print(human="processed 3 items", agent={"items": 3, "ok": True})
 
     captured = capfd.readouterr()
     assert json.loads(captured.out) == {"items": 3, "ok": True}
 
 
-def test_output_validates_human_and_agent_shape_before_printing(
+def test_print_validates_human_and_agent_shape_before_printing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -346,36 +399,26 @@ def test_output_validates_human_and_agent_shape_before_printing(
 
     with cllg():
         with pytest.raises(TypeError, match="human"):
-            output(human=object(), agent={"ok": True})  # type: ignore[arg-type]
+            cllg_pkg.print(human=object(), agent={"ok": True})  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="agent"):
-            output(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
+            cllg_pkg.print(human="bad", agent=["not", "object"])  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="string keys"):
-            output(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
+            cllg_pkg.print(human="bad", agent={1: "bad"})  # type: ignore[dict-item]
+        with pytest.raises(TypeError, match="JSON-serializable"):
+            cllg_pkg.print(human="bad", agent={"bad": object()})
 
     assert capfd.readouterr().out == ""
 
 
-def test_output_human_mode_does_not_pre_check_agent_value_serializability(
+def test_print_works_without_active_cllg_context(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(sys, "argv", ["command"])
 
-    output(human="hello", agent={"unserializable": object()})
+    cllg_pkg.print(human="outside", agent={"ok": True})
 
-    assert capfd.readouterr().out == "hello\n"
-
-
-def test_output_works_without_active_cllg_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    forwarded_stdout = io.StringIO()
-    monkeypatch.setattr(sys, "argv", ["command"])
-    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
-
-    output(human="outside", agent={"ok": True})
-
-    assert forwarded_stdout.getvalue() == "outside\n"
+    assert capfd.readouterr().out == "outside\n"
 
 
 def test_cllg_forwards_stdout_and_stderr(
@@ -419,14 +462,12 @@ def test_cllg_restores_streams_after_exception(
     print("outside capture")
 
     assert capfd.readouterr().out == "captured before exception\noutside capture\n"
-    events = _read_events(session.path / "events.jsonl")
-    session_ends = _events_of_type(events, "session_end")
-    assert len(session_ends) == 1
-    assert session_ends[0]["text"] == "boom"
-    assert session_ends[0]["data"] == {"exception_type": "RuntimeError"}
+    command = _read_json(session.path / "command.json")
+    assert command["exception"] == {"type": "RuntimeError", "message": "boom"}
+    assert command["ended_at"] is not None
 
 
-def test_cllg_emits_session_end_on_clean_exit(
+def test_clean_exit_does_not_write_lifecycle_prints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -436,11 +477,8 @@ def test_cllg_emits_session_end_on_clean_exit(
     with cllg() as session:
         pass
 
-    events = _read_events(session.path / "events.jsonl")
-    session_ends = _events_of_type(events, "session_end")
-    assert len(session_ends) == 1
-    assert session_ends[0]["text"] == ""
-    assert session_ends[0]["data"] == {}
+    assert _read_prints(session.path / "prints.jsonl") == []
+    assert not (session.path / "events.jsonl").exists()
 
 
 def test_command_json_records_started_and_ended_timestamps(
@@ -460,6 +498,7 @@ def test_command_json_records_started_and_ended_timestamps(
     ended = datetime.fromisoformat(final["ended_at"])
     assert started == datetime.fromisoformat(mid_run["started_at"])
     assert ended >= started
+    assert final["exception"] is None
 
 
 def test_command_json_keeps_ended_at_null_when_session_crashes(
@@ -513,7 +552,7 @@ def test_cllg_keeps_stdout_as_real_text_stream(
         assert isinstance(sys.stdout, io.TextIOBase)
 
 
-def test_progress_events_are_logged_without_terminal_output_in_json_mode(
+def test_progress_writes_one_marker_without_terminal_output_in_json_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -527,20 +566,15 @@ def test_progress_events_are_logged_without_terminal_output_in_json_mode(
             task.update(human="replication 2", agent={"replication": 2})
 
     assert stream.getvalue() == ""
-    events = _read_events(session.path / "events.jsonl")
-    starts = _events_of_type(events, "progress_start")
-    advances = _events_of_type(events, "progress_advance")
-    finishes = _events_of_type(events, "progress_finish")
-
-    assert len(starts) == 1
-    assert len(advances) == 2
-    assert len(finishes) == 1
-    assert starts[0]["total"] == 2
-    assert finishes[0]["current"] == 2
-    assert {"replication": 1} in [advance["data"] for advance in advances]
+    records = _read_prints(session.path / "prints.jsonl")
+    assert len(records) == 1
+    assert records[0]["kind"] == "progress"
+    assert records[0]["human"] == "smoke fixed limerick"
+    assert records[0]["agent"]["event"] == "progress_start"
+    assert records[0]["agent"]["total"] == 2
 
 
-def test_non_tty_progress_falls_back_to_logged_events_only(
+def test_non_tty_progress_records_marker_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -552,10 +586,5 @@ def test_non_tty_progress_falls_back_to_logged_events_only(
             task.update(human="done", agent={"done": True})
 
     assert stream.getvalue() == ""
-    events = _read_events(session.path / "events.jsonl")
-    assert {event["type"] for event in events} == {
-        "progress_start",
-        "progress_advance",
-        "progress_finish",
-        "session_end",
-    }
+    records = _read_prints(session.path / "prints.jsonl")
+    assert [record["kind"] for record in records] == ["progress"]

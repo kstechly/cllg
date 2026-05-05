@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from cllg import cllg, output
+import cllg
 
 
 def main() -> int:
-    with cllg() as log:
-        output(human="starting example", agent={"event": "starting"})
-        output(human="complete", agent={"event": "complete", "ok": True})
-        log.event("message", text="starting example")
-        log.event("message", text="completed example")
+    with cllg.cllg():
+        cllg.print(human="starting example", agent={"event": "starting"})
+        cllg.print(human="complete", agent={"event": "complete", "ok": True})
     return 0
 
 

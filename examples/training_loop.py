@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
-from cllg import cllg, output, progress
+import cllg
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,9 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg():
+    with cllg.cllg():
         final_loss = train_model(epochs=args.epochs, delay=args.delay)
-        output(
+        cllg.print(
             human=f"training complete loss={final_loss:.3f}",
             agent={"ok": True, "epochs": args.epochs, "loss": final_loss},
         )
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def train_model(*, epochs: int, delay: float) -> float:
     loss = 1.0
-    with progress("training", total=epochs) as task:
+    with cllg.progress("training", total=epochs) as task:
         task.message(
             human="initialized training loop",
             agent={"event": "training_initialized", "epochs": epochs},

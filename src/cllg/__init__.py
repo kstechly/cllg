@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from cllg.core import cllg, output, progress
+from cllg.core import cllg, print, progress
 
 __all__ = [
     "cllg",
-    "output",
+    "print",
     "progress",
 ]

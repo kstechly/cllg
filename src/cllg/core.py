@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import platform
@@ -87,7 +88,7 @@ def cllg() -> LogSession:
         git_metadata=git_metadata,
     )
     _write_json(path / "command.json", command_metadata)
-    (path / "events.jsonl").touch()
+    (path / "prints.jsonl").touch()
     (path / "stdout.out").touch()
     (path / "stderr.err").touch()
     return LogSession(
@@ -144,37 +145,46 @@ class LogSession(AbstractContextManager["LogSession"]):
         traceback: TracebackType | None,
     ) -> bool | None:
         try:
-            if exc_value is None:
-                self.event("session_end")
-            else:
-                self.event(
-                    "session_end",
-                    text=str(exc_value),
-                    data={"exception_type": exc_type.__name__},
-                )
+            if exc_value is not None:
+                self.command_metadata["exception"] = {
+                    "type": exc_type.__name__ if exc_type is not None else None,
+                    "message": str(exc_value),
+                }
             self.command_metadata["ended_at"] = self.clock().isoformat()
             _write_json(self.path / "command.json", self.command_metadata)
         finally:
             self._restore_stdio()
         return None
 
-    def event(
-        self,
-        event_type: str,
-        *,
-        text: str = "",
-        data: dict[str, Any] | None = None,
-        **fields: Any,
-    ) -> None:
-        event = {
-            "type": event_type,
-            "timestamp": self.clock().isoformat(),
-            "text": text,
-            "data": data or {},
-            **fields,
-        }
-        with (self.path / "events.jsonl").open("a", encoding="utf-8") as file:
-            file.write(json.dumps(event, sort_keys=True) + "\n")
+    def print(self, *, human: str, agent: dict[str, Any]) -> None:
+        _print_with_session(human=human, agent=agent, session=self)
+
+    def _record_print(self, *, human: str, agent: dict[str, Any]) -> None:
+        _append_print_record(
+            self.path,
+            {
+                "kind": "print",
+                "timestamp": self.clock().isoformat(),
+                "human": human,
+                "agent": agent,
+            },
+        )
+
+    def _record_progress_start(self, *, title: str, total: int | None) -> None:
+        _append_print_record(
+            self.path,
+            {
+                "kind": "progress",
+                "timestamp": self.clock().isoformat(),
+                "human": title,
+                "agent": {
+                    "event": "progress_start",
+                    "title": title,
+                    "total": total,
+                    "message": "progress is available in the log artifacts",
+                },
+            },
+        )
 
     def _restore_stdio(self) -> None:
         try:
@@ -225,13 +235,22 @@ def _current_session() -> LogSession | None:
     return _CURRENT_SESSION.get()
 
 
-def output(*, human: str, agent: dict[str, Any]) -> None:
-    _validate_output_payload(human=human, agent=agent)
-    text = _agent_text(agent) if _json_mode() else human
-    print(text)
+def print(*, human: str, agent: dict[str, Any]) -> None:
     session = _current_session()
+    _print_with_session(human=human, agent=agent, session=session)
+
+
+def _print_with_session(
+    *,
+    human: str,
+    agent: dict[str, Any],
+    session: LogSession | None,
+) -> None:
+    _validate_print_payload(human=human, agent=agent)
+    text = _agent_text(agent) if _json_mode() else human
+    builtins.print(text)
     if session is not None:
-        session.event("output", text=human, data=agent)
+        session._record_print(human=human, agent=agent)
 
 
 def progress(
@@ -281,15 +300,7 @@ class ProgressTask:
         human: str = "",
         agent: dict[str, Any] | None = None,
     ) -> None:
-        agent_payload = _validate_agent_payload(agent or {})
-        if self.session is not None:
-            self.session.event(
-                "progress_message",
-                text=human,
-                data=agent_payload,
-                current=self._current,
-                total=self.total,
-            )
+        _validate_agent_payload(agent or {})
         self.display.message(human)
 
     def update(
@@ -299,17 +310,8 @@ class ProgressTask:
         human: str = "",
         agent: dict[str, Any] | None = None,
     ) -> None:
-        agent_payload = _validate_agent_payload(agent or {})
+        _validate_agent_payload(agent or {})
         self._current += advance
-        if self.session is not None:
-            self.session.event(
-                "progress_advance",
-                text=human,
-                data=agent_payload,
-                current=self._current,
-                total=self.total,
-                advance=advance,
-            )
         self.display.update(advance=advance, text=human)
 
 
@@ -321,9 +323,8 @@ def _progress_task(
     title: str,
     total: int | None,
 ) -> Iterator[ProgressTask]:
-    current = 0
     if session is not None:
-        session.event("progress_start", text=title, current=current, total=total)
+        session._record_progress_start(title=title, total=total)
     with display_context as display:
         task = ProgressTask(
             session=session,
@@ -331,16 +332,7 @@ def _progress_task(
             title=title,
             total=total,
         )
-        try:
-            yield task
-        finally:
-            if session is not None:
-                session.event(
-                    "progress_finish",
-                    text=title,
-                    current=task.current,
-                    total=total,
-                )
+        yield task
 
 
 class _ProgressDisplay:
@@ -433,6 +425,7 @@ def _command_metadata(
         "cwd": str(cwd),
         "started_at": opened_at.isoformat(),
         "ended_at": None,
+        "exception": None,
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,
@@ -533,7 +526,7 @@ def _json_mode() -> bool:
     return "--json" in sys.argv
 
 
-def _validate_output_payload(*, human: str, agent: dict[str, Any]) -> None:
+def _validate_print_payload(*, human: str, agent: dict[str, Any]) -> None:
     if not isinstance(human, str):
         raise TypeError("human output must be a string")
     _validate_agent_payload(agent)
@@ -543,6 +536,10 @@ def _validate_agent_payload(agent: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(agent, dict):
         raise TypeError("agent output must be a JSON object")
     _validate_string_keys(agent)
+    try:
+        json.dumps(agent, sort_keys=True)
+    except TypeError as exc:
+        raise TypeError("agent output must be JSON-serializable") from exc
     return agent
 
 
@@ -572,3 +569,8 @@ def _write_json(path: Path, payload: Any) -> None:
         json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _append_print_record(path: Path, payload: dict[str, Any]) -> None:
+    with (path / "prints.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload, sort_keys=True) + "\n")

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import time
 
-from cllg import cllg, output, progress
+import cllg
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,8 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg():
-        with progress("demo work", total=args.steps) as task:
+    with cllg.cllg():
+        with cllg.progress("demo work", total=args.steps) as task:
             for index in range(args.steps):
                 time.sleep(args.delay)
                 task.update(
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
                     agent={"item": index + 1, "items": args.steps},
                 )
         payload = {"ok": True, "steps": args.steps}
-        output(human=f"processed {args.steps} steps", agent=payload)
+        cllg.print(human=f"processed {args.steps} steps", agent=payload)
     return 0
 
 
