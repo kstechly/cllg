@@ -117,3 +117,49 @@ def test_json_mode_example_defaults_to_human_output(
 
     assert log_dir.is_dir()
     assert (log_dir / "result.json").is_file()
+
+
+def test_command_vs_events_example_shows_static_metadata_and_timeline(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "examples/command_vs_events.py",
+            "--json",
+            "--log-root",
+            str(tmp_path / "logs"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+
+    assert completed.stderr == ""
+    assert payload["command"]["file"] == "command.json"
+    assert payload["command"]["purpose"] == "one invocation metadata snapshot"
+    assert payload["events"]["file"] == "events.jsonl"
+    assert payload["events"]["purpose"] == "append-only timeline of what happened"
+    assert payload["events"]["count"] >= 3
+    assert Path(payload["log_dir"]).is_dir()
+
+
+def test_command_vs_events_example_human_output_names_both_files(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "examples/command_vs_events.py",
+            "--log-root",
+            str(tmp_path / "logs"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "command.json: one invocation metadata snapshot" in completed.stdout
+    assert "events.jsonl: append-only timeline of what happened" in completed.stdout

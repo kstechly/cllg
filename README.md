@@ -31,6 +31,7 @@ with open_log_session(command="smoke", argv=sys.argv) as session:
 ```bash
 uv run python examples/basic_session.py
 uv run python examples/progress_demo.py
+uv run python examples/command_vs_events.py
 uv run python examples/json_mode.py --json | uv run python -m json.tool
 uv run python examples/git_metadata.py
 ```
