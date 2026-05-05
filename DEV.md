@@ -50,6 +50,10 @@ remain normal text streams while `cllg()` is active.
 Nested sessions should preserve the command-run mental model: outer logs include
 inner output, and inner logs contain the inner slice.
 
+Progress TTY detection must use the original stderr state from before fd-level
+capture. Checking `sys.stderr.isatty()` after Wurlitzer has redirected fd 2 sees
+the capture pipe and silently kills terminal progress.
+
 ## Environment Metadata
 
 `command.json["env"]` is allowlisted metadata, not a full environment dump.

@@ -106,12 +106,14 @@ class LogSession(AbstractContextManager["LogSession"]):
     _stderr_echo_fd: int | None = None
     _stdout_file: BinaryIO | None = None
     _stderr_file: BinaryIO | None = None
+    _stderr_isatty: bool = False
     _context_token: Token[LogSession | None] | None = None
 
     def __enter__(self) -> LogSession:
         self._context_token = _CURRENT_SESSION.set(self)
         try:
             _flush_stdio()
+            self._stderr_isatty = sys.stderr.isatty()
             self._stdout_echo_fd = os.dup(1)
             self._stderr_echo_fd = os.dup(2)
             self._stdout_file = (self.path / "stdout.txt").open("ab")
@@ -228,7 +230,15 @@ def progress(
     stream: TextIO | None = None,
 ) -> AbstractContextManager[ProgressTask]:
     session = current_session()
-    sink = _make_progress_sink(json_mode=_json_mode(), stream=stream or sys.stderr)
+    progress_stream = stream or sys.stderr
+    force_tty = None
+    if stream is None and session is not None:
+        force_tty = session._stderr_isatty
+    sink = _make_progress_sink(
+        json_mode=_json_mode(),
+        stream=progress_stream,
+        force_tty=force_tty,
+    )
     return _progress_task(session=session, sink=sink, title=title, total=total)
 
 
@@ -349,8 +359,9 @@ class NoopProgressDisplay(ProgressDisplay):
 
 
 class AliveProgressSink(ProgressSink):
-    def __init__(self, stream: TextIO) -> None:
+    def __init__(self, stream: TextIO, *, force_tty: bool) -> None:
         self._stream = stream
+        self._force_tty = force_tty
 
     def task(
         self,
@@ -365,6 +376,7 @@ class AliveProgressSink(ProgressSink):
                 total,
                 title=title,
                 file=self._stream,
+                force_tty=self._force_tty,
                 enrich_print=True,
                 dual_line=True,
                 receipt=True,
@@ -405,10 +417,16 @@ class AliveProgressDisplay(ProgressDisplay):
             text_attr(text)
 
 
-def _make_progress_sink(*, json_mode: bool, stream: TextIO) -> ProgressSink:
-    if json_mode or not stream.isatty():
+def _make_progress_sink(
+    *,
+    json_mode: bool,
+    stream: TextIO,
+    force_tty: bool | None = None,
+) -> ProgressSink:
+    is_tty = stream.isatty() if force_tty is None else force_tty
+    if json_mode or not is_tty:
         return NoopProgressSink()
-    return AliveProgressSink(stream)
+    return AliveProgressSink(stream, force_tty=is_tty)
 
 
 def _command_metadata(

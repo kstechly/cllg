@@ -137,7 +137,9 @@ def train_model(*, epochs: int) -> float:
 See `examples/training_loop.py` for a runnable version.
 
 In `--json` mode progress is logged but not painted to the terminal. In human
-TTY mode it uses `alive-progress`.
+TTY mode it uses `alive-progress`. When `progress(...)` runs inside `cllg()`,
+TTY detection uses the original stderr state from before fd-level capture, so
+progress bars still paint on a real terminal.
 
 `progress(...)` also works outside `cllg()`. In that case it can still paint
 human progress when stderr is a TTY, but it has no active session, so it does
