@@ -107,6 +107,7 @@ class LogSession(AbstractContextManager["LogSession"]):
     _stdout_file: BinaryIO | None = None
     _stderr_file: BinaryIO | None = None
     _stderr_isatty: bool = False
+    _terminal_cols: int | None = None
     _context_token: Token[LogSession | None] | None = None
 
     def __enter__(self) -> LogSession:
@@ -114,6 +115,12 @@ class LogSession(AbstractContextManager["LogSession"]):
         try:
             _flush_stdio()
             self._stderr_isatty = sys.stderr.isatty()
+            if self._stderr_isatty:
+                try:
+                    cols = os.get_terminal_size(2).columns
+                except OSError:
+                    cols = 0
+                self._terminal_cols = cols if cols > 0 else None
             self._stdout_echo_fd = os.dup(1)
             self._stderr_echo_fd = os.dup(2)
             self._stdout_file = (self.path / "stdout.out").open("ab")
@@ -232,12 +239,15 @@ def progress(
     session = _current_session()
     progress_stream = stream or sys.stderr
     terminal_is_tty = None
+    terminal_cols = None
     if stream is None and session is not None:
         terminal_is_tty = session._stderr_isatty
+        terminal_cols = session._terminal_cols
     display_context = _make_progress_display(
         json_mode=_json_mode(),
         stream=progress_stream,
         terminal_is_tty=terminal_is_tty,
+        terminal_cols=terminal_cols,
         title=title,
         total=total,
     )
@@ -369,11 +379,17 @@ def _make_progress_display(
     title: str,
     total: int | None,
     terminal_is_tty: bool | None = None,
+    terminal_cols: int | None = None,
 ) -> AbstractContextManager[_ProgressDisplay]:
     is_tty = stream.isatty() if terminal_is_tty is None else terminal_is_tty
     if json_mode or not is_tty:
         return nullcontext(_NoopProgressDisplay())
-    return _alive_progress_display(stream=stream, title=title, total=total)
+    return _alive_progress_display(
+        stream=stream,
+        title=title,
+        total=total,
+        terminal_cols=terminal_cols,
+    )
 
 
 @contextmanager
@@ -382,6 +398,7 @@ def _alive_progress_display(
     stream: TextIO,
     title: str,
     total: int | None,
+    terminal_cols: int | None = None,
 ) -> Iterator[_AliveProgressDisplay]:
     from alive_progress import alive_bar
 
@@ -393,6 +410,7 @@ def _alive_progress_display(
         enrich_print=True,
         dual_line=True,
         receipt=True,
+        max_cols=terminal_cols if terminal_cols is not None else 80,
     ) as bar:
         yield _AliveProgressDisplay(bar)
 
