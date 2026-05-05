@@ -75,6 +75,36 @@ def test_json_mode_example_json_flag_controls_machine_output(
     assert (log_dir / "result.json").is_file()
 
 
+def test_capture_stdio_example_captures_chatter_and_keeps_json_clean(
+    tmp_path: Path,
+) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "examples/capture_stdio.py",
+            "--json",
+            "--log-root",
+            str(tmp_path / "logs"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(completed.stdout)
+    log_dir = Path(payload["log_dir"])
+
+    assert payload["ok"] is True
+    assert completed.stdout.count("\n") == 1
+    assert "human/progress chatter" not in completed.stdout
+    assert completed.stderr == "human/progress chatter\nwarnings\n"
+    assert (log_dir / "stdout.txt").read_text(encoding="utf-8") == (
+        "human/progress chatter\n"
+    )
+    assert (log_dir / "stderr.txt").read_text(encoding="utf-8") == "warnings\n"
+    assert (log_dir / "result.json").is_file()
+
+
 def test_command_vs_events_example_shows_static_metadata_and_timeline(
     tmp_path: Path,
 ) -> None:

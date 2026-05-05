@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 from cllg import make_progress, open_log_session
 
@@ -138,6 +142,124 @@ def test_session_writes_json_artifacts_and_jsonl_events(tmp_path: Path) -> None:
     assert events[0]["type"] == "message"
     assert events[0]["text"] == "starting"
     assert events[0]["data"] == {"replication": 0}
+
+
+def test_capture_stdio_writes_stdout_and_stderr_while_forwarding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    forwarded_stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
+
+    with open_log_session(
+        command="capture",
+        argv=["capture"],
+        log_root=tmp_path / "logs",
+        cwd=tmp_path,
+        clock=_fixed_clock,
+    ) as session:
+        with session.capture_stdio():
+            print("stdout print")
+            sys.stdout.write("stdout write\n")
+            print("stderr print", file=sys.stderr)
+            sys.stderr.write("stderr write\n")
+
+    expected_stdout = "stdout print\nstdout write\n"
+    expected_stderr = "stderr print\nstderr write\n"
+    assert forwarded_stdout.getvalue() == expected_stdout
+    assert forwarded_stderr.getvalue() == expected_stderr
+    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == expected_stdout
+    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == expected_stderr
+
+
+def test_capture_stdio_restores_streams_after_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    forwarded_stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
+
+    with open_log_session(
+        command="capture",
+        argv=["capture"],
+        log_root=tmp_path / "logs",
+        cwd=tmp_path,
+        clock=_fixed_clock,
+    ) as session:
+        with pytest.raises(RuntimeError, match="boom"):
+            with session.capture_stdio():
+                print("captured before exception")
+                raise RuntimeError("boom")
+
+        assert sys.stdout is forwarded_stdout
+        assert sys.stderr is forwarded_stderr
+        print("outside capture")
+
+    assert forwarded_stdout.getvalue() == "captured before exception\noutside capture\n"
+    assert (
+        session.path / "stdout.txt"
+    ).read_text(encoding="utf-8") == "captured before exception\n"
+    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == ""
+
+
+def test_capture_stdio_keeps_json_printed_after_capture_out_of_stdout_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", forwarded_stdout)
+
+    with open_log_session(
+        command="capture",
+        argv=["capture"],
+        log_root=tmp_path / "logs",
+        cwd=tmp_path,
+        clock=_fixed_clock,
+    ) as session:
+        with session.capture_stdio():
+            print("human chatter")
+        payload = {"ok": True, "log_dir": str(session.path)}
+        print(json.dumps(payload, sort_keys=True))
+
+    assert json.loads(forwarded_stdout.getvalue().splitlines()[-1])["ok"] is True
+    assert (session.path / "stdout.txt").read_text(encoding="utf-8") == "human chatter\n"
+
+
+def test_capture_stdio_captures_logging_handlers_bound_inside_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forwarded_stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", forwarded_stderr)
+    logger = logging.getLogger("cllg.tests.capture_stdio")
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.setLevel(logging.INFO)
+
+    with open_log_session(
+        command="capture",
+        argv=["capture"],
+        log_root=tmp_path / "logs",
+        cwd=tmp_path,
+        clock=_fixed_clock,
+    ) as session:
+        with session.capture_stdio():
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
+            logger.addHandler(handler)
+            try:
+                logger.info("captured log")
+            finally:
+                logger.removeHandler(handler)
+                handler.close()
+
+    expected = "INFO:captured log\n"
+    assert forwarded_stderr.getvalue() == expected
+    assert (session.path / "stderr.txt").read_text(encoding="utf-8") == expected
 
 
 def test_progress_events_are_logged_without_terminal_output_in_json_mode(

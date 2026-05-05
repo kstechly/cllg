@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, Iterator, Protocol, TextIO
+from typing import Any, Callable, Iterable, Iterator, Protocol, TextIO
 
 Clock = Callable[[], datetime]
 
@@ -100,6 +100,24 @@ class LogSession(AbstractContextManager["LogSession"]):
         self.event("artifact", text=name, data={"path": str(path)})
         return path
 
+    @contextmanager
+    def capture_stdio(self) -> Iterator[None]:
+        stdout_path = self.path / "stdout.txt"
+        stderr_path = self.path / "stderr.txt"
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        with stdout_path.open("a", encoding="utf-8") as stdout_file, stderr_path.open(
+            "a",
+            encoding="utf-8",
+        ) as stderr_file:
+            sys.stdout = _TeeTextIO(original_stdout, stdout_file)  # type: ignore[assignment]
+            sys.stderr = _TeeTextIO(original_stderr, stderr_file)  # type: ignore[assignment]
+            try:
+                yield
+            finally:
+                sys.stdout = original_stdout
+                sys.stderr = original_stderr
+
     def _artifact_path(self, name: str) -> Path:
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
@@ -107,6 +125,47 @@ class LogSession(AbstractContextManager["LogSession"]):
         path = self.path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
+
+
+class _TeeTextIO:
+    def __init__(self, stream: TextIO, artifact: TextIO) -> None:
+        self._stream = stream
+        self._artifact = artifact
+
+    @property
+    def encoding(self) -> str | None:
+        return getattr(self._stream, "encoding", None)
+
+    @property
+    def errors(self) -> str | None:
+        return getattr(self._stream, "errors", None)
+
+    @property
+    def newlines(self) -> Any:
+        return getattr(self._stream, "newlines", None)
+
+    @property
+    def closed(self) -> bool:
+        return self._stream.closed
+
+    def write(self, text: str) -> int:
+        written = self._stream.write(text)
+        self._artifact.write(text)
+        return written
+
+    def writelines(self, lines: Iterable[str]) -> None:
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        self._stream.flush()
+        self._artifact.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
 
 
 def make_progress(
