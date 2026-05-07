@@ -1,7 +1,9 @@
 # cllg
 
 Opinionated persistent debug logging and structured print replacement for
-Python CLI commands.
+Python CLI commands to force my LLMs to have logs (thus killing `tail -n 1` issues) and to enforce providing both human friendly from machine readable output at every print and progress bar.
+
+Basically just an opinionated wrapper!
 
 ```python
 import cllg
@@ -33,7 +35,7 @@ logging handlers that write to stdout/stderr, and subprocess output inherited on
 file descriptors 1 and 2. Handlers or subprocesses pointed at explicit files,
 sockets, pipes, or custom streams are outside the capture boundary.
 
-Nested sessions are allowed. The outer session log includes inner session
+Nested sessions are allowed. But why are you using them... The outer session log includes inner session
 output, because the outer session represents the whole command run; the inner
 session log contains its own slice.
 
