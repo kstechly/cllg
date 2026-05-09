@@ -137,9 +137,6 @@ their app code:
 ```toml
 [tool.ruff.lint]
 extend-select = ["T201"]
-
-[tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["T201"]
 ```
 
 Then run:
