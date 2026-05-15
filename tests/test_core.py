@@ -31,6 +31,16 @@ def _read_prints(path: Path) -> list[dict[str, object]]:
     ]
 
 
+def _log_dirs(repo: Path) -> list[Path]:
+    return sorted(path for path in (repo / "logs").glob("*/*") if path.is_dir())
+
+
+def _only_log_dir(repo: Path) -> Path:
+    log_dirs = _log_dirs(repo)
+    assert len(log_dirs) == 1
+    return log_dirs[0]
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", *args],
@@ -95,21 +105,22 @@ def test_cllg_creates_run_directory_and_command_metadata(
     monkeypatch.setattr(sys, "argv", ["/usr/local/bin/smoke", "fixed", "--json"])
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    with cllg(json=False) as session:
-        assert session.path.is_dir()
-        assert session.path.parent == repo / "logs" / "2026-05-05"
-        assert session.path.name.startswith("141233-smoke")
+    with cllg(json=False):
+        pass
 
-    command = _read_json(session.path / "command.json")
+    log_dir = _only_log_dir(repo)
+    command = _read_json(log_dir / "command.json")
 
+    assert log_dir.parent == repo / "logs" / "2026-05-05"
+    assert log_dir.name.startswith("141233-smoke")
     assert command["argv"] == ["/usr/local/bin/smoke", "fixed", "--json"]
     assert "command" not in command
     assert command["cwd"] == str(repo)
     assert command["git"]["present"] is True
-    assert (session.path / "prints.jsonl").is_file()
-    assert not (session.path / "events.jsonl").exists()
-    assert (session.path / "stdout.out").is_file()
-    assert (session.path / "stderr.err").is_file()
+    assert (log_dir / "prints.jsonl").is_file()
+    assert not (log_dir / "events.jsonl").exists()
+    assert (log_dir / "stdout.out").is_file()
+    assert (log_dir / "stderr.err").is_file()
 
 
 def test_cllg_print_replaces_print_and_records_prints_jsonl(
@@ -117,13 +128,13 @@ def test_cllg_print_replaces_print_and_records_prints_jsonl(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         cllg_module.print(human="processed 3 items", agent={"ok": True, "items": 3})
 
     assert capfd.readouterr().out == "processed 3 items\n"
-    records = _read_prints(session.path / "prints.jsonl")
+    records = _read_prints(_only_log_dir(repo) / "prints.jsonl")
     assert records == [
         {
             "agent": {"items": 3, "ok": True},
@@ -139,9 +150,9 @@ def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=True) as session:
+    with cllg(json=True):
         cllg_module.print(human="one", agent={"event": "one"})
         cllg_module.print(human="two", agent={"event": "two"})
 
@@ -149,7 +160,7 @@ def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
         {"event": "one"},
         {"event": "two"},
     ]
-    assert [record["agent"] for record in _read_prints(session.path / "prints.jsonl")] == [
+    assert [record["agent"] for record in _read_prints(_only_log_dir(repo) / "prints.jsonl")] == [
         {"event": "one"},
         {"event": "two"},
     ]
@@ -162,12 +173,12 @@ def test_cllg_print_deep_code_uses_active_session(
     def deep_print() -> None:
         cllg_module.print(human="deep", agent={"scope": "deep"})
 
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         deep_print()
 
-    records = _read_prints(session.path / "prints.jsonl")
+    records = _read_prints(_only_log_dir(repo) / "prints.jsonl")
     assert [record["agent"] for record in records] == [{"scope": "deep"}]
 
 
@@ -175,20 +186,19 @@ def test_cllg_creates_distinct_run_directories_with_same_timestamp(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    with cllg(json=False) as first:
+    with cllg(json=False):
         pass
-    with cllg(json=False) as second:
+    with cllg(json=False):
         pass
 
-    assert first.path != second.path
-    assert first.path.is_dir()
-    assert second.path.is_dir()
-    assert first.path.parent == second.path.parent
-    assert first.path.name.startswith("141233-")
-    assert second.path.name.startswith("141233-")
+    first, second = _log_dirs(repo)
+    assert first != second
+    assert first.parent == second.parent
+    assert first.name.startswith("141233-")
+    assert second.name.startswith("141233-")
 
 
 def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
@@ -202,12 +212,13 @@ def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
     monkeypatch.chdir(nested)
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         pass
 
-    command = _read_json(session.path / "command.json")
+    log_dir = _only_log_dir(repo)
+    command = _read_json(log_dir / "command.json")
 
-    assert session.path.parent == repo / "logs" / "2026-05-05"
+    assert log_dir.parent == repo / "logs" / "2026-05-05"
     assert command["cwd"] == str(nested)
     assert command["git"]["repo_root"] == str(repo)
 
@@ -216,7 +227,7 @@ def test_cllg_records_only_allowlisted_environment_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
     monkeypatch.setenv("TORCH_HOME", "/models/torch")
@@ -224,10 +235,10 @@ def test_cllg_records_only_allowlisted_environment_metadata(
     monkeypatch.setenv("WORLD_SIZE", "8")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "do-not-log")
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         pass
 
-    env = _read_json(session.path / "command.json")["env"]
+    env = _read_json(_only_log_dir(repo) / "command.json")["env"]
     required_values = {
         "CUDA_VISIBLE_DEVICES": "0,1",
         "MASTER_ADDR": "127.0.0.1",
@@ -251,10 +262,10 @@ def test_cllg_records_git_commit_and_dirty_state(
     (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
     monkeypatch.chdir(repo)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         pass
 
-    command = _read_json(session.path / "command.json")
+    command = _read_json(_only_log_dir(repo) / "command.json")
     git = command["git"]
 
     assert git["present"] is True
@@ -278,10 +289,10 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
     monkeypatch.chdir(repo)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         pass
 
-    git = _read_json(session.path / "command.json")["git"]
+    git = _read_json(_only_log_dir(repo) / "command.json")["git"]
 
     assert git["present"] is True
     assert git["head"] == {"kind": "unborn", "branch": "main"}
@@ -293,18 +304,20 @@ def test_nested_print_records_go_to_the_active_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=False) as outer:
-        with cllg(json=False) as inner:
+    with cllg(json=False):
+        with cllg(json=False):
             cllg_module.print(human="inner", agent={"scope": "inner"})
         cllg_module.print(human="outer", agent={"scope": "outer"})
 
-    outer_outputs = _read_prints(outer.path / "prints.jsonl")
-    inner_outputs = _read_prints(inner.path / "prints.jsonl")
+    log_records = [_read_prints(log_dir / "prints.jsonl") for log_dir in _log_dirs(repo)]
 
-    assert [record["agent"] for record in outer_outputs] == [{"scope": "outer"}]
-    assert [record["agent"] for record in inner_outputs] == [{"scope": "inner"}]
+    agent_records = [[record["agent"] for record in records] for records in log_records]
+    assert sorted(agent_records, key=repr) == [
+        [{"scope": "inner"}],
+        [{"scope": "outer"}],
+    ]
 
 
 def test_print_validates_human_and_agent_shape_before_printing(
@@ -312,7 +325,7 @@ def test_print_validates_human_and_agent_shape_before_printing(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
     with cllg(json=False):
         with pytest.raises(TypeError, match="human"):
@@ -341,7 +354,7 @@ def test_cllg_forwards_stdout_and_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
     with cllg(json=False):
         print("stdout print")
@@ -361,12 +374,12 @@ def test_cllg_restores_streams_after_exception(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
     with pytest.raises(RuntimeError, match="boom"):
-        with cllg(json=False) as session:
+        with cllg(json=False):
             print("captured before exception")
             raise RuntimeError("boom")
 
@@ -375,7 +388,7 @@ def test_cllg_restores_streams_after_exception(
     print("outside capture")
 
     assert capfd.readouterr().out == "captured before exception\noutside capture\n"
-    command = _read_json(session.path / "command.json")
+    command = _read_json(_only_log_dir(repo) / "command.json")
     assert command["exception"] == {"type": "RuntimeError", "message": "boom"}
     assert command["ended_at"] is not None
 
@@ -384,27 +397,29 @@ def test_clean_exit_does_not_write_lifecycle_prints(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=False) as session:
+    with cllg(json=False):
         pass
 
-    assert _read_prints(session.path / "prints.jsonl") == []
-    assert not (session.path / "events.jsonl").exists()
+    log_dir = _only_log_dir(repo)
+    assert _read_prints(log_dir / "prints.jsonl") == []
+    assert not (log_dir / "events.jsonl").exists()
 
 
 def test_command_json_records_started_and_ended_timestamps(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
 
-    with cllg(json=False) as session:
-        mid_run = _read_json(session.path / "command.json")
+    with cllg(json=False):
+        log_dir = _only_log_dir(repo)
+        mid_run = _read_json(log_dir / "command.json")
         assert mid_run["ended_at"] is None
         assert datetime.fromisoformat(mid_run["started_at"]).tzinfo is not None
 
-    final = _read_json(session.path / "command.json")
+    final = _read_json(log_dir / "command.json")
     started = datetime.fromisoformat(final["started_at"])
     ended = datetime.fromisoformat(final["ended_at"])
     assert started == datetime.fromisoformat(mid_run["started_at"])
@@ -417,7 +432,7 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
     logger = logging.getLogger("cllg.tests.capture")
     logger.handlers.clear()
     logger.propagate = False
@@ -442,15 +457,15 @@ def test_progress_writes_records_for_start_message_and_each_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = FakeTty()
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    with cllg(json=True) as session:
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
+    with cllg(json=True):
         with progress("smoke fixed limerick", total=2, stream=stream) as task:
             task.message(human="loaded", agent={"event": "loaded"})
             task.update(human="replication 1", agent={"replication": 1})
             task.update(human="replication 2", agent={"replication": 2})
 
     assert stream.getvalue() == ""
-    records = _read_prints(session.path / "prints.jsonl")
+    records = _read_prints(_only_log_dir(repo) / "prints.jsonl")
     assert [record["kind"] for record in records] == [
         "progress_start",
         "progress_message",
@@ -487,13 +502,13 @@ def test_non_tty_progress_records_start_and_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stream = io.StringIO()
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    with cllg(json=False) as session:
+    repo = _init_and_enter_git_repo(tmp_path, monkeypatch)
+    with cllg(json=False):
         with progress("batch", total=1, stream=stream) as task:
             task.update(human="done", agent={"done": True})
 
     assert stream.getvalue() == ""
-    records = _read_prints(session.path / "prints.jsonl")
+    records = _read_prints(_only_log_dir(repo) / "prints.jsonl")
     assert [record["kind"] for record in records] == [
         "progress_start",
         "progress_advance",

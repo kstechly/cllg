@@ -156,28 +156,6 @@ def test_training_loop_example_logs_deep_progress_without_polluting_json_stdout(
     ]
 
 
-def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
-    tmp_path: Path,
-) -> None:
-    completed = _run_example(tmp_path, "command_vs_prints.py", "--json")
-    payload = _json_stdout(completed)
-    log_dir = _only_log_dir(tmp_path)
-    command_path = log_dir / str(payload["command"]["file"])
-    prints_path = log_dir / str(payload["prints"]["file"])
-    records = _read_jsonl(prints_path)
-
-    assert completed.stderr == ""
-    assert command_path.is_file()
-    assert prints_path.is_file()
-    assert payload["command"]["argv"][0].endswith("command_vs_prints.py")
-    assert payload["prints"]["count_before_final_print"] == len(
-        payload["prints"]["kinds_before_final_print"]
-    )
-    assert "progress_start" in payload["prints"]["kinds_before_final_print"]
-    assert "progress_advance" in payload["prints"]["kinds_before_final_print"]
-    assert "print" in [record["kind"] for record in records]
-
-
 def test_fd_capture_logs_buffer_logging_and_subprocess_output(
     tmp_path: Path,
 ) -> None:
@@ -276,4 +254,3 @@ with cllg(json=False):
     assert completed.stdout == b"outer before\ninner\nouter after\n"
     assert (outer / "stdout.out").read_bytes() == completed.stdout
     assert (inner / "stdout.out").read_bytes() == b"inner\n"
-

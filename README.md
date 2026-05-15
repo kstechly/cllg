@@ -161,7 +161,5 @@ Ruff rule belongs in consumer repositories.
 uv run python examples/basic_session.py
 uv run python examples/progress_demo.py
 uv run python examples/training_loop.py --json
-uv run python examples/command_vs_prints.py
 uv run python examples/json_mode.py --json
-uv run python examples/git_metadata.py
 ```

@@ -20,7 +20,7 @@ from typing import Any, BinaryIO, TextIO
 from wurlitzer import pipes
 
 Clock = Callable[[], datetime]
-_CURRENT_SESSION: ContextVar[LogSession | None] = ContextVar(
+_CURRENT_SESSION: ContextVar[_LogSession | None] = ContextVar(
     "cllg_current_session",
     default=None,
 )
@@ -69,7 +69,7 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def cllg(*, json: bool) -> LogSession:
+def cllg(*, json: bool) -> AbstractContextManager[None]:
     argv = list(sys.argv)
     command_slug = _command_slug_from_argv(argv)
     cwd = Path.cwd().resolve()
@@ -90,19 +90,19 @@ def cllg(*, json: bool) -> LogSession:
     (path / "prints.jsonl").touch()
     (path / "stdout.out").touch()
     (path / "stderr.err").touch()
-    return LogSession(
-        json=json,
-        path=path,
-        command_metadata=command_metadata,
+    return _LogSession(
+        _json=json,
+        _path=path,
+        _command_metadata=command_metadata,
     )
 
 
 @dataclass(slots=True)
-class LogSession(AbstractContextManager["LogSession"]):
-    json: bool
-    path: Path
-    command_metadata: dict[str, Any]
-    clock: Clock = _utc_now
+class _LogSession(AbstractContextManager[None]):
+    _json: bool
+    _path: Path
+    _command_metadata: dict[str, Any]
+    _clock: Clock = _utc_now
     _stdio_capture: AbstractContextManager[Any] | None = None
     _stdout_echo_fd: int | None = None
     _stderr_echo_fd: int | None = None
@@ -110,9 +110,9 @@ class LogSession(AbstractContextManager["LogSession"]):
     _stderr_file: BinaryIO | None = None
     _stderr_isatty: bool = False
     _terminal_cols: int | None = None
-    _context_token: Token[LogSession | None] | None = None
+    _context_token: Token[_LogSession | None] | None = None
 
-    def __enter__(self) -> LogSession:
+    def __enter__(self) -> None:
         self._context_token = _CURRENT_SESSION.set(self)
         try:
             _flush_stdio()
@@ -125,8 +125,8 @@ class LogSession(AbstractContextManager["LogSession"]):
                 self._terminal_cols = cols if cols > 0 else None
             self._stdout_echo_fd = os.dup(1)
             self._stderr_echo_fd = os.dup(2)
-            self._stdout_file = (self.path / "stdout.out").open("ab")
-            self._stderr_file = (self.path / "stderr.err").open("ab")
+            self._stdout_file = (self._path / "stdout.out").open("ab")
+            self._stderr_file = (self._path / "stderr.err").open("ab")
             stdio_capture = pipes(
                 stdout=_FdTee(self._stdout_echo_fd, self._stdout_file),
                 stderr=_FdTee(self._stderr_echo_fd, self._stderr_file),
@@ -134,7 +134,7 @@ class LogSession(AbstractContextManager["LogSession"]):
             )
             stdio_capture.__enter__()
             self._stdio_capture = stdio_capture
-            return self
+            return None
         except Exception:
             self._restore_stdio()
             raise
@@ -147,22 +147,22 @@ class LogSession(AbstractContextManager["LogSession"]):
     ) -> bool | None:
         try:
             if exc_value is not None:
-                self.command_metadata["exception"] = {
+                self._command_metadata["exception"] = {
                     "type": exc_type.__name__,
                     "message": str(exc_value),
                 }
-            self.command_metadata["ended_at"] = self.clock().isoformat()
-            _write_json(self.path / "command.json", self.command_metadata)
+            self._command_metadata["ended_at"] = self._clock().isoformat()
+            _write_json(self._path / "command.json", self._command_metadata)
         finally:
             self._restore_stdio()
         return None
 
     def _record_print(self, *, human: str, agent: dict[str, Any]) -> None:
         _append_print_record(
-            self.path,
+            self._path,
             {
                 "kind": "print",
-                "timestamp": self.clock().isoformat(),
+                "timestamp": self._clock().isoformat(),
                 "human": human,
                 "agent": agent,
             },
@@ -170,10 +170,10 @@ class LogSession(AbstractContextManager["LogSession"]):
 
     def _record_progress_start(self, *, title: str, total: int | None) -> None:
         _append_print_record(
-            self.path,
+            self._path,
             {
                 "kind": "progress_start",
-                "timestamp": self.clock().isoformat(),
+                "timestamp": self._clock().isoformat(),
                 "human": title,
                 "agent": {},
                 "title": title,
@@ -190,10 +190,10 @@ class LogSession(AbstractContextManager["LogSession"]):
         total: int | None,
     ) -> None:
         _append_print_record(
-            self.path,
+            self._path,
             {
                 "kind": "progress_message",
-                "timestamp": self.clock().isoformat(),
+                "timestamp": self._clock().isoformat(),
                 "human": human,
                 "agent": agent,
                 "current": current,
@@ -211,10 +211,10 @@ class LogSession(AbstractContextManager["LogSession"]):
         advance: int,
     ) -> None:
         _append_print_record(
-            self.path,
+            self._path,
             {
                 "kind": "progress_advance",
-                "timestamp": self.clock().isoformat(),
+                "timestamp": self._clock().isoformat(),
                 "human": human,
                 "agent": agent,
                 "current": current,
@@ -268,7 +268,7 @@ def _flush_stdio() -> None:
     sys.stderr.flush()
 
 
-def _current_session() -> LogSession | None:
+def _current_session() -> _LogSession | None:
     return _CURRENT_SESSION.get()
 
 
@@ -277,7 +277,7 @@ def print(*, human: str, agent: dict[str, Any]) -> None:
     if session is None:
         raise RuntimeError("cllg.print requires an active cllg session")
     _validate_print_payload(human=human, agent=agent)
-    text = _agent_text(agent) if session.json else human
+    text = _agent_text(agent) if session._json else human
     builtins.print(text)
     session._record_print(human=human, agent=agent)
 
@@ -298,7 +298,7 @@ def progress(
         terminal_is_tty = session._stderr_isatty
         terminal_cols = session._terminal_cols
     display_context = _make_progress_display(
-        json_mode=session.json,
+        json_mode=session._json,
         stream=progress_stream,
         terminal_is_tty=terminal_is_tty,
         terminal_cols=terminal_cols,
@@ -315,7 +315,7 @@ def progress(
 
 @dataclass(slots=True)
 class ProgressTask:
-    session: LogSession
+    session: _LogSession
     display: _ProgressDisplay
     title: str
     total: int | None = None
@@ -362,7 +362,7 @@ class ProgressTask:
 @contextmanager
 def _progress_task(
     *,
-    session: LogSession,
+    session: _LogSession,
     display_context: AbstractContextManager[_ProgressDisplay],
     title: str,
     total: int | None,
