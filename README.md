@@ -1,7 +1,7 @@
 # cllg
 
 Opinionated persistent debug logging and structured print replacement for
-Python CLI commands to force my LLMs to have logs (thus killing `tail -n 1` issues) and to enforce providing both human friendly from machine readable output at every print and progress bar.
+Python CLI commands to force my LLMs to have logs (thus killing `tail -n 1` issues) and to enforce providing both human friendly and machine readable output at every print and progress bar.
 
 Basically just an opinionated wrapper!
 
