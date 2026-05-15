@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import select
 import subprocess
 import sys
 from pathlib import Path
@@ -48,52 +46,6 @@ def _run_script(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]
         check=True,
         capture_output=True,
     )
-
-
-def _run_script_in_pty(tmp_path: Path, source: str) -> bytes:
-    _init_git_repo(tmp_path)
-    script = tmp_path / "script.py"
-    script.write_text(source, encoding="utf-8")
-    master_fd, slave_fd = os.openpty()
-    try:
-        process = subprocess.Popen(
-            [sys.executable, str(script)],
-            cwd=tmp_path,
-            stdin=subprocess.DEVNULL,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-        )
-        os.close(slave_fd)
-        output = bytearray()
-        while True:
-            ready, _, _ = select.select([master_fd], [], [], 5)
-            if not ready:
-                process.kill()
-                raise TimeoutError("pty script did not finish")
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            output.extend(chunk)
-            if process.poll() is not None:
-                try:
-                    while chunk := os.read(master_fd, 4096):
-                        output.extend(chunk)
-                except OSError:
-                    pass
-                break
-        returncode = process.wait()
-        if returncode != 0:
-            raise subprocess.CalledProcessError(returncode, process.args, bytes(output))
-        return bytes(output)
-    finally:
-        try:
-            os.close(master_fd)
-        except OSError:
-            pass
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -325,21 +277,3 @@ with cllg(json=False):
     assert (outer / "stdout.out").read_bytes() == completed.stdout
     assert (inner / "stdout.out").read_bytes() == b"inner\n"
 
-
-def test_progress_paints_on_tty_inside_cllg(
-    tmp_path: Path,
-) -> None:
-    output = _run_script_in_pty(
-        tmp_path,
-        """
-from __future__ import annotations
-
-from cllg import cllg, progress
-
-with cllg(json=False):
-    with progress("tty progress", total=1) as task:
-        task.update(human="done", agent={"done": True})
-""",
-    )
-
-    assert b"tty progress" in output

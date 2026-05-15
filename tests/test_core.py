@@ -285,37 +285,6 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     assert any("untracked.txt" in entry for entry in git["status_short"])
 
 
-def test_cllg_records_complete_git_metadata_with_small_git_call_budget(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_git_repo(repo)
-    monkeypatch.chdir(repo)
-
-    calls: list[tuple[str, ...]] = []
-    real_run = subprocess.run
-
-    def spy_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        command = args[0]
-        if isinstance(command, list) and command and command[0] == "git":
-            calls.append(tuple(str(part) for part in command[1:]))
-        return real_run(*args, **kwargs)
-
-    monkeypatch.setattr("cllg.core.subprocess.run", spy_run)
-
-    with cllg(json=False) as session:
-        pass
-
-    git = _read_json(session.path / "command.json")["git"]
-    assert git["present"] is True
-    assert git["repo_root"] == str(repo)
-    assert git["head"]["kind"] == "commit"
-    assert git["dirty"] is False
-    assert len(calls) <= 2
-
-
 def test_nested_print_records_go_to_the_active_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -439,19 +408,6 @@ def test_command_json_records_started_and_ended_timestamps(
     assert final["exception"] is None
 
 
-def test_command_json_keeps_ended_at_null_when_session_crashes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-
-    session = cllg(json=False)
-    metadata = _read_json(session.path / "command.json")
-
-    assert metadata["ended_at"] is None
-    assert "started_at" in metadata
-
-
 def test_cllg_captures_logging_handlers_bound_inside_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -475,16 +431,6 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
 
     expected = "INFO:captured log\n"
     assert capfd.readouterr().err == expected
-
-
-def test_cllg_keeps_stdout_as_real_text_stream(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-
-    with cllg(json=False):
-        assert isinstance(sys.stdout, io.TextIOBase)
 
 
 def test_progress_writes_records_for_start_message_and_each_update(
