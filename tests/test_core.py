@@ -12,7 +12,6 @@ import pytest
 
 import cllg as cllg_module
 from cllg import cllg, progress
-from cllg.core import _unique_run_path
 
 
 class FakeTty(io.StringIO):
@@ -172,19 +171,24 @@ def test_cllg_print_deep_code_uses_active_session(
     assert [record["agent"] for record in records] == [{"scope": "deep"}]
 
 
-def test_unique_run_path_creates_distinct_dirs_under_same_stem(
+def test_cllg_creates_distinct_run_directories_with_same_timestamp(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    parent = tmp_path / "logs"
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    first = _unique_run_path(parent, "141233-smoke")
-    second = _unique_run_path(parent, "141233-smoke")
+    with cllg(json=False) as first:
+        pass
+    with cllg(json=False) as second:
+        pass
 
-    assert first != second
-    assert first.is_dir()
-    assert second.is_dir()
-    assert first.name.startswith("141233-smoke")
-    assert second.name.startswith("141233-smoke")
+    assert first.path != second.path
+    assert first.path.is_dir()
+    assert second.path.is_dir()
+    assert first.path.parent == second.path.parent
+    assert first.path.name.startswith("141233-")
+    assert second.path.name.startswith("141233-")
 
 
 def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
