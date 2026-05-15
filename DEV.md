@@ -6,7 +6,7 @@ edge cases.
 
 ## Product Contract
 
-`cllg()` opens one command run. While active it:
+`cllg(json=...)` opens one command run. While active it:
 
 - creates repo-local persistent debug logs;
 - tees stdout/stderr without stopping normal printing;
@@ -14,10 +14,15 @@ edge cases.
 - makes human/agent command printing boring to consume.
 
 Correct defaults are the product. Running outside a git repository is an error.
-stdout/stderr capture is on when `cllg()` is active. `--json` changes
-`cllg.print(...)` rendering to JSONL, not whether logging exists.
+stdout/stderr capture is on when `cllg(json=...)` is active. `json=True`
+changes `cllg.print(...)` rendering to JSONL, not whether logging exists.
 `progress(...)` and `cllg.print(...)` find the active session from context, so
 deep code does not need a `log` parameter.
+
+Applications own CLI parsing. `cllg` may snapshot `sys.argv` into
+`command.json` as invocation evidence, but argv must never drive behavior.
+JSON rendering is controlled only by the required `json=` argument on
+`cllg(...)`.
 
 Avoid flags like `capture_stdio=True`, `capture_logging=True`, or
 `use_context_progress=True`. Those are usually design backsliding unless a real
@@ -82,7 +87,7 @@ contract.
 
 Docs should explain the CLI migration:
 
-- wrap the CLI boundary with `with cllg():`;
+- wrap the CLI boundary with `with cllg(json=args.json):`;
 - leave ordinary deep code mostly ordinary;
 - use `cllg.print(...)` where the CLI would otherwise print;
 - use `progress(...)` for loops and long-running work;

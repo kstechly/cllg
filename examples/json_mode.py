@@ -13,7 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg.cllg():
+    with cllg.cllg(json=args.json):
         with cllg.progress("json safe work", total=1) as task:
             task.update(human="done", agent={"done": True})
         payload = {"ok": True}

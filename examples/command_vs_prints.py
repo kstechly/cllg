@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg.cllg() as log:
+    with cllg.cllg(json=args.json) as log:
         with cllg.progress("write timeline", total=1) as task:
             task.update(
                 human="progress marker recorded",
@@ -41,7 +41,6 @@ def _payload(log_dir: Path) -> dict[str, object]:
         "command": {
             "file": "command.json",
             "purpose": COMMAND_PURPOSE,
-            "command": command["command"],
             "argv": command["argv"],
             "git_present": command["git"]["present"],
         },

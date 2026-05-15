@@ -217,7 +217,7 @@ def test_command_vs_prints_example_shows_static_metadata_and_print_stream(
     assert completed.stderr == ""
     assert command_path.is_file()
     assert prints_path.is_file()
-    assert payload["command"]["command"] == "command_vs_prints.py"
+    assert payload["command"]["argv"][0].endswith("command_vs_prints.py")
     assert payload["prints"]["count_before_final_print"] == len(
         payload["prints"]["kinds_before_final_print"]
     )
@@ -248,7 +248,7 @@ handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("PRE:%(message)s"))
 logger.addHandler(handler)
 
-with cllg():
+with cllg(json=False):
     print("print stdout")
     sys.stdout.flush()
     sys.stdout.buffer.write(b"buffer stdout\\n")
@@ -285,7 +285,7 @@ import sys
 
 from cllg import cllg
 
-with cllg():
+with cllg(json=False):
     sys.stdout.buffer.write(b"bad:\\xff\\n")
     sys.stdout.flush()
 """,
@@ -306,9 +306,9 @@ from __future__ import annotations
 
 from cllg import cllg
 
-with cllg():
+with cllg(json=False):
     print("outer before")
-    with cllg():
+    with cllg(json=False):
         print("inner")
     print("outer after")
 """,
@@ -336,7 +336,7 @@ from __future__ import annotations
 
 from cllg import cllg, progress
 
-with cllg():
+with cllg(json=False):
     with progress("tty progress", total=1) as task:
         task.update(human="done", agent={"done": True})
 """,

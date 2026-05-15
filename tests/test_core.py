@@ -84,7 +84,7 @@ def test_cllg_fails_early_outside_git_repo(
     monkeypatch.setattr(sys, "argv", ["smoke"])
 
     with pytest.raises(RuntimeError, match="git repository"):
-        cllg()
+        cllg(json=False)
 
     assert not (tmp_path / "logs").exists()
 
@@ -97,15 +97,15 @@ def test_cllg_creates_run_directory_and_command_metadata(
     monkeypatch.setattr(sys, "argv", ["/usr/local/bin/smoke", "fixed", "--json"])
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         assert session.path.is_dir()
         assert session.path.parent == repo / "logs" / "2026-05-05"
         assert session.path.name.startswith("141233-smoke")
 
     command = _read_json(session.path / "command.json")
 
-    assert command["command"] == "smoke"
     assert command["argv"] == ["/usr/local/bin/smoke", "fixed", "--json"]
+    assert "command" not in command
     assert command["cwd"] == str(repo)
     assert command["git"]["present"] is True
     assert (session.path / "prints.jsonl").is_file()
@@ -122,7 +122,7 @@ def test_cllg_print_replaces_print_and_records_prints_jsonl(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         cllg_module.print(human="processed 3 items", agent={"ok": True, "items": 3})
 
     assert capfd.readouterr().out == "processed 3 items\n"
@@ -143,9 +143,9 @@ def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command", "--json"])
+    monkeypatch.setattr(sys, "argv", ["command"])
 
-    with cllg() as session:
+    with cllg(json=True) as session:
         cllg_module.print(human="one", agent={"event": "one"})
         cllg_module.print(human="two", agent={"event": "two"})
 
@@ -169,7 +169,7 @@ def test_cllg_print_deep_code_uses_active_session(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         deep_print()
 
     records = _read_prints(session.path / "prints.jsonl")
@@ -203,7 +203,7 @@ def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
     monkeypatch.setattr(sys, "argv", ["nested-command"])
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     command = _read_json(session.path / "command.json")
@@ -226,7 +226,7 @@ def test_cllg_records_only_allowlisted_environment_metadata(
     monkeypatch.setenv("WORLD_SIZE", "8")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "do-not-log")
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     env = _read_json(session.path / "command.json")["env"]
@@ -254,7 +254,7 @@ def test_cllg_records_git_commit_and_dirty_state(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(sys, "argv", ["game"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     command = _read_json(session.path / "command.json")
@@ -282,7 +282,7 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     monkeypatch.chdir(repo)
     monkeypatch.setattr(sys, "argv", ["game"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     git = _read_json(session.path / "command.json")["git"]
@@ -314,7 +314,7 @@ def test_cllg_records_complete_git_metadata_with_small_git_call_budget(
 
     monkeypatch.setattr("cllg.core.subprocess.run", spy_run)
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     git = _read_json(session.path / "command.json")["git"]
@@ -332,8 +332,8 @@ def test_nested_print_records_go_to_the_active_session(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["outer"])
 
-    with cllg() as outer:
-        with cllg() as inner:
+    with cllg(json=False) as outer:
+        with cllg(json=False) as inner:
             cllg_module.print(human="inner", agent={"scope": "inner"})
         cllg_module.print(human="outer", agent={"scope": "outer"})
 
@@ -350,9 +350,9 @@ def test_print_prints_agent_json_in_json_mode(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command", "--json"])
+    monkeypatch.setattr(sys, "argv", ["command"])
 
-    with cllg() as session:
+    with cllg(json=True) as session:
         cllg_module.print(human="processed 3 items", agent={"items": 3, "ok": True})
 
     captured = capfd.readouterr()
@@ -367,7 +367,7 @@ def test_print_validates_human_and_agent_shape_before_printing(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["command"])
 
-    with cllg():
+    with cllg(json=False):
         with pytest.raises(TypeError, match="human"):
             cllg_module.print(human=object(), agent={"ok": True})  # type: ignore[arg-type]
         with pytest.raises(TypeError, match="agent"):
@@ -378,15 +378,34 @@ def test_print_validates_human_and_agent_shape_before_printing(
     assert capfd.readouterr().out == ""
 
 
-def test_print_works_without_active_cllg_context(
+def test_print_requires_active_cllg_context(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(RuntimeError, match="active cllg session"):
+        cllg_module.print(human="outside", agent={"ok": True})
+
+    assert capfd.readouterr().out == ""
+
+
+def test_progress_requires_active_cllg_context() -> None:
+    with pytest.raises(RuntimeError, match="active cllg session"):
+        with progress("outside", total=1):
+            pass
+
+
+def test_json_mode_is_session_state_not_argv(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["command"])
+    _init_and_enter_git_repo(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["command", "--json"])
 
-    cllg_module.print(human="outside", agent={"ok": True})
+    with cllg(json=False):
+        monkeypatch.setattr(sys, "argv", ["command", "--json", "--still-ignored"])
+        cllg_module.print(human="human", agent={"ok": True})
 
-    assert capfd.readouterr().out == "outside\n"
+    assert capfd.readouterr().out == "human\n"
 
 
 def test_cllg_forwards_stdout_and_stderr(
@@ -397,7 +416,7 @@ def test_cllg_forwards_stdout_and_stderr(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
 
-    with cllg():
+    with cllg(json=False):
         print("stdout print")
         sys.stdout.write("stdout write\n")
         print("stderr print", file=sys.stderr)
@@ -421,7 +440,7 @@ def test_cllg_restores_streams_after_exception(
     original_stderr = sys.stderr
 
     with pytest.raises(RuntimeError, match="boom"):
-        with cllg() as session:
+        with cllg(json=False) as session:
             print("captured before exception")
             raise RuntimeError("boom")
 
@@ -442,7 +461,7 @@ def test_clean_exit_does_not_write_lifecycle_prints(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["smoke"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         pass
 
     assert _read_prints(session.path / "prints.jsonl") == []
@@ -456,7 +475,7 @@ def test_command_json_records_started_and_ended_timestamps(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["smoke"])
 
-    with cllg() as session:
+    with cllg(json=False) as session:
         mid_run = _read_json(session.path / "command.json")
         assert mid_run["ended_at"] is None
         assert datetime.fromisoformat(mid_run["started_at"]).tzinfo is not None
@@ -476,7 +495,7 @@ def test_command_json_keeps_ended_at_null_when_session_crashes(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["smoke"])
 
-    session = cllg()
+    session = cllg(json=False)
     metadata = _read_json(session.path / "command.json")
 
     assert metadata["ended_at"] is None
@@ -495,7 +514,7 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
     logger.propagate = False
     logger.setLevel(logging.INFO)
 
-    with cllg():
+    with cllg(json=False):
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:%(message)s"))
         logger.addHandler(handler)
@@ -516,7 +535,7 @@ def test_cllg_keeps_stdout_as_real_text_stream(
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["capture"])
 
-    with cllg():
+    with cllg(json=False):
         assert isinstance(sys.stdout, io.TextIOBase)
 
 
@@ -526,8 +545,8 @@ def test_progress_writes_records_for_start_message_and_each_update(
 ) -> None:
     stream = FakeTty()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke", "--json"])
-    with cllg() as session:
+    monkeypatch.setattr(sys, "argv", ["smoke"])
+    with cllg(json=True) as session:
         with progress("smoke fixed limerick", total=2, stream=stream) as task:
             task.message(human="loaded", agent={"event": "loaded"})
             task.update(human="replication 1", agent={"replication": 1})
@@ -573,7 +592,7 @@ def test_non_tty_progress_records_start_and_advance(
     stream = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
     monkeypatch.setattr(sys, "argv", ["batch"])
-    with cllg() as session:
+    with cllg(json=False) as session:
         with progress("batch", total=1, stream=stream) as task:
             task.update(human="done", agent={"done": True})
 

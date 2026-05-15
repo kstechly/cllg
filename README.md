@@ -6,19 +6,23 @@ Python CLI commands.
 ```python
 import cllg
 
-with cllg.cllg():
+with cllg.cllg(json=False):
     cllg.print(human="processed 3 items", agent={"ok": True, "items": 3})
 ```
 
-`cllg()` must run inside a git repository. It creates a timestamped run
+`cllg(json=...)` must run inside a git repository. It creates a timestamped run
 directory under the repository root's `logs/` directory, writes invocation
 metadata, and tees stdout/stderr into log files without changing what the
 command prints. Running from a subdirectory still writes to the repo root, not
 the process working directory.
 
+Applications own CLI parsing. `cllg` records `sys.argv` as provenance, but it
+never reads argv to decide behavior. Pass your parsed JSON-mode flag explicitly
+as `cllg.cllg(json=args.json)`.
+
 ## What Gets Logged
 
-- `command.json`: argv, derived command name, cwd, `started_at`, `ended_at`
+- `command.json`: argv, cwd, `started_at`, `ended_at`
   (null until the session closes cleanly), exception metadata, Python/platform/
   host metadata, allowlisted environment metadata, and git state.
 - `prints.jsonl`: structured records for `cllg.print(...)` calls and for every
@@ -53,14 +57,15 @@ cllg.print(
 )
 ```
 
-Human mode prints the human string. `--json` mode prints the agent object as one
-stable JSON line. Multiple `cllg.print(...)` calls in `--json` mode produce
-JSONL on stdout.
+Human mode prints the human string. When the active session was opened with
+`json=True`, `cllg.print(...)` prints the agent object as one stable JSON line.
+Multiple `cllg.print(...)` calls in JSON mode produce JSONL on stdout.
 
-Inside `cllg()`, every `cllg.print(...)` call is also appended to
+Inside `cllg(json=...)`, every `cllg.print(...)` call is also appended to
 `prints.jsonl` with `kind`, `timestamp`, `human`, and `agent` fields. Deep code
 can call `cllg.print(...)` directly; it finds the active session from context,
 so you do not need to thread a logger through the call stack.
+Calling `cllg.print(...)` without an active session is an error.
 
 `human` must be a string. `agent` must be a JSON-serializable object with string
 keys. `cllg` validates before printing, so bad agent payloads fail before
@@ -68,8 +73,9 @@ polluting stdout with broken machine output.
 
 ## Progress
 
-`progress(...)` uses the active `cllg()` session, so deep code does not need a
-`log` parameter.
+`progress(...)` uses the active `cllg(json=...)` session, so deep code does not
+need a `log` parameter.
+Calling `progress(...)` without an active session is an error.
 
 ```python
 import cllg
@@ -84,11 +90,11 @@ with cllg.progress("training", total=epochs) as task:
 ```
 
 In human TTY mode, progress uses `alive-progress`. Progress is always logged to
-`prints.jsonl`, regardless of `--json` mode: opening a progress context appends
+`prints.jsonl`, regardless of JSON mode: opening a progress context appends
 a `kind: "progress_start"` record with `title` and `total`, then each
 `task.message(...)` and `task.update(...)` appends a `kind: "progress_message"`
 or `kind: "progress_advance"` record carrying the user's `agent` payload plus
-`current` / `total` counters (and `advance` on advances). In `--json` mode,
+`current` / `total` counters (and `advance` on advances). In JSON mode,
 progress does not stream to stdout — agents tail `prints.jsonl` for updates.
 
 ## Migrating From Print
@@ -100,7 +106,8 @@ import cllg
 
 
 def main() -> int:
-    with cllg.cllg():
+    args = parse_args()
+    with cllg.cllg(json=args.json):
         run_command()
     return 0
 ```
@@ -123,9 +130,9 @@ cllg.print(
 )
 ```
 
-Raw prints are still captured inside `cllg()`, so migration can be incremental.
+Raw prints are still captured inside `cllg(json=...)`, so migration can be incremental.
 The point of `cllg.print(...)` is keeping human output and machine-readable
-`--json` output under one validated API.
+JSON output under one validated API.
 
 ## Consumer Linting
 

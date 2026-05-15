@@ -18,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    with cllg.cllg():
+    with cllg.cllg(json=args.json):
         final_loss = train_model(epochs=args.epochs, delay=args.delay)
         cllg.print(
             human=f"training complete loss={final_loss:.3f}",

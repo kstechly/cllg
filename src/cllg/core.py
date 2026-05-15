@@ -69,19 +69,18 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def cllg() -> LogSession:
+def cllg(*, json: bool) -> LogSession:
     argv = list(sys.argv)
-    command = _command_from_argv(argv)
+    command_slug = _command_slug_from_argv(argv)
     cwd = Path.cwd().resolve()
     repo_root = _repo_root(cwd)
     git_metadata = _git_metadata(cwd, repo_root=repo_root)
     opened_at = _utc_now()
     path = _unique_run_path(
         repo_root / "logs" / opened_at.strftime("%Y-%m-%d"),
-        f"{opened_at.strftime('%H%M%S')}-{_slug(command)}",
+        f"{opened_at.strftime('%H%M%S')}-{command_slug}",
     )
     command_metadata = _command_metadata(
-        command=command,
         argv=argv,
         cwd=cwd,
         opened_at=opened_at,
@@ -92,6 +91,7 @@ def cllg() -> LogSession:
     (path / "stdout.out").touch()
     (path / "stderr.err").touch()
     return LogSession(
+        json=json,
         path=path,
         command_metadata=command_metadata,
     )
@@ -99,6 +99,7 @@ def cllg() -> LogSession:
 
 @dataclass(slots=True)
 class LogSession(AbstractContextManager["LogSession"]):
+    json: bool
     path: Path
     command_metadata: dict[str, Any]
     clock: Clock = _utc_now
@@ -273,6 +274,8 @@ def _current_session() -> LogSession | None:
 
 def print(*, human: str, agent: dict[str, Any]) -> None:
     session = _current_session()
+    if session is None:
+        raise RuntimeError("cllg.print requires an active cllg session")
     _print_with_session(human=human, agent=agent, session=session)
 
 
@@ -280,13 +283,12 @@ def _print_with_session(
     *,
     human: str,
     agent: dict[str, Any],
-    session: LogSession | None,
+    session: LogSession,
 ) -> None:
     _validate_print_payload(human=human, agent=agent)
-    text = _agent_text(agent) if _json_mode() else human
+    text = _agent_text(agent) if session.json else human
     builtins.print(text)
-    if session is not None:
-        session._record_print(human=human, agent=agent)
+    session._record_print(human=human, agent=agent)
 
 
 def progress(
@@ -296,14 +298,16 @@ def progress(
     stream: TextIO | None = None,
 ) -> AbstractContextManager[ProgressTask]:
     session = _current_session()
+    if session is None:
+        raise RuntimeError("cllg.progress requires an active cllg session")
     progress_stream = stream or sys.stderr
     terminal_is_tty = None
     terminal_cols = None
-    if stream is None and session is not None:
+    if stream is None:
         terminal_is_tty = session._stderr_isatty
         terminal_cols = session._terminal_cols
     display_context = _make_progress_display(
-        json_mode=_json_mode(),
+        json_mode=session.json,
         stream=progress_stream,
         terminal_is_tty=terminal_is_tty,
         terminal_cols=terminal_cols,
@@ -320,7 +324,7 @@ def progress(
 
 @dataclass(slots=True)
 class ProgressTask:
-    session: LogSession | None
+    session: LogSession
     display: _ProgressDisplay
     title: str
     total: int | None = None
@@ -337,13 +341,12 @@ class ProgressTask:
         agent: dict[str, Any] | None = None,
     ) -> None:
         agent_payload = _validate_agent_payload(agent or {})
-        if self.session is not None:
-            self.session._record_progress_message(
-                human=human,
-                agent=agent_payload,
-                current=self._current,
-                total=self.total,
-            )
+        self.session._record_progress_message(
+            human=human,
+            agent=agent_payload,
+            current=self._current,
+            total=self.total,
+        )
         self.display.message(human)
 
     def update(
@@ -355,27 +358,25 @@ class ProgressTask:
     ) -> None:
         agent_payload = _validate_agent_payload(agent or {})
         self._current += advance
-        if self.session is not None:
-            self.session._record_progress_advance(
-                human=human,
-                agent=agent_payload,
-                current=self._current,
-                total=self.total,
-                advance=advance,
-            )
+        self.session._record_progress_advance(
+            human=human,
+            agent=agent_payload,
+            current=self._current,
+            total=self.total,
+            advance=advance,
+        )
         self.display.update(advance=advance, text=human)
 
 
 @contextmanager
 def _progress_task(
     *,
-    session: LogSession | None,
+    session: LogSession,
     display_context: AbstractContextManager[_ProgressDisplay],
     title: str,
     total: int | None,
 ) -> Iterator[ProgressTask]:
-    if session is not None:
-        session._record_progress_start(title=title, total=total)
+    session._record_progress_start(title=title, total=total)
     with display_context as display:
         task = ProgressTask(
             session=session,
@@ -464,14 +465,12 @@ def _alive_progress_display(
 
 def _command_metadata(
     *,
-    command: str,
     argv: list[str],
     cwd: Path,
     opened_at: datetime,
     git_metadata: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "command": command,
         "argv": argv,
         "cwd": str(cwd),
         "started_at": opened_at.isoformat(),
@@ -573,10 +572,6 @@ def _slug(raw: str) -> str:
     return slug or "command"
 
 
-def _json_mode() -> bool:
-    return "--json" in sys.argv
-
-
 def _validate_print_payload(*, human: str, agent: dict[str, Any]) -> None:
     if not isinstance(human, str):
         raise TypeError("human output must be a string")
@@ -605,10 +600,10 @@ def _agent_text(agent: dict[str, Any]) -> str:
     return json.dumps(agent, sort_keys=True)
 
 
-def _command_from_argv(argv: list[str]) -> str:
+def _command_slug_from_argv(argv: list[str]) -> str:
     if not argv:
         return "command"
-    return Path(argv[0]).name or "command"
+    return _slug(Path(argv[0]).name or "command")
 
 
 def _write_json(path: Path, payload: Any) -> None:

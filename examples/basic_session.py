@@ -4,7 +4,7 @@ import cllg
 
 
 def main() -> int:
-    with cllg.cllg():
+    with cllg.cllg(json=False):
         cllg.print(human="starting example", agent={"event": "starting"})
         cllg.print(human="complete", agent={"event": "complete", "ok": True})
     return 0
