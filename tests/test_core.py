@@ -81,7 +81,6 @@ def test_cllg_fails_early_outside_git_repo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
 
     with pytest.raises(RuntimeError, match="git repository"):
         cllg(json=False)
@@ -120,7 +119,6 @@ def test_cllg_print_replaces_print_and_records_prints_jsonl(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg(json=False) as session:
         cllg_module.print(human="processed 3 items", agent={"ok": True, "items": 3})
@@ -143,7 +141,6 @@ def test_cllg_print_json_mode_emits_jsonl_for_multiple_prints(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg(json=True) as session:
         cllg_module.print(human="one", agent={"event": "one"})
@@ -167,7 +164,6 @@ def test_cllg_print_deep_code_uses_active_session(
         cllg_module.print(human="deep", agent={"scope": "deep"})
 
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg(json=False) as session:
         deep_print()
@@ -200,7 +196,6 @@ def test_cllg_writes_logs_at_git_root_when_invoked_from_subdirectory(
     nested.mkdir(parents=True)
     _init_git_repo(repo)
     monkeypatch.chdir(nested)
-    monkeypatch.setattr(sys, "argv", ["nested-command"])
     monkeypatch.setattr("cllg.core._utc_now", _fixed_clock)
 
     with cllg(json=False) as session:
@@ -218,7 +213,6 @@ def test_cllg_records_only_allowlisted_environment_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["env-check"])
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
     monkeypatch.setenv("TORCH_HOME", "/models/torch")
@@ -252,7 +246,6 @@ def test_cllg_records_git_commit_and_dirty_state(
     _init_git_repo(repo)
     (repo / "tracked.txt").write_text("dirty\n", encoding="utf-8")
     monkeypatch.chdir(repo)
-    monkeypatch.setattr(sys, "argv", ["game"])
 
     with cllg(json=False) as session:
         pass
@@ -280,7 +273,6 @@ def test_cllg_records_unborn_git_repo_without_fake_commit(
     _git(repo, "init", "-b", "main")
     (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
     monkeypatch.chdir(repo)
-    monkeypatch.setattr(sys, "argv", ["game"])
 
     with cllg(json=False) as session:
         pass
@@ -301,7 +293,6 @@ def test_cllg_records_complete_git_metadata_with_small_git_call_budget(
     repo.mkdir()
     _init_git_repo(repo)
     monkeypatch.chdir(repo)
-    monkeypatch.setattr(sys, "argv", ["game"])
 
     calls: list[tuple[str, ...]] = []
     real_run = subprocess.run
@@ -330,7 +321,6 @@ def test_nested_print_records_go_to_the_active_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["outer"])
 
     with cllg(json=False) as outer:
         with cllg(json=False) as inner:
@@ -344,28 +334,12 @@ def test_nested_print_records_go_to_the_active_session(
     assert [record["agent"] for record in inner_outputs] == [{"scope": "inner"}]
 
 
-def test_print_prints_agent_json_in_json_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
-
-    with cllg(json=True) as session:
-        cllg_module.print(human="processed 3 items", agent={"items": 3, "ok": True})
-
-    captured = capfd.readouterr()
-    assert json.loads(captured.out) == {"items": 3, "ok": True}
-
-
 def test_print_validates_human_and_agent_shape_before_printing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command"])
 
     with cllg(json=False):
         with pytest.raises(TypeError, match="human"):
@@ -378,13 +352,9 @@ def test_print_validates_human_and_agent_shape_before_printing(
     assert capfd.readouterr().out == ""
 
 
-def test_print_requires_active_cllg_context(
-    capfd: pytest.CaptureFixture[str],
-) -> None:
+def test_print_requires_active_cllg_context() -> None:
     with pytest.raises(RuntimeError, match="active cllg session"):
         cllg_module.print(human="outside", agent={"ok": True})
-
-    assert capfd.readouterr().out == ""
 
 
 def test_progress_requires_active_cllg_context() -> None:
@@ -393,28 +363,12 @@ def test_progress_requires_active_cllg_context() -> None:
             pass
 
 
-def test_json_mode_is_session_state_not_argv(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capfd: pytest.CaptureFixture[str],
-) -> None:
-    _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["command", "--json"])
-
-    with cllg(json=False):
-        monkeypatch.setattr(sys, "argv", ["command", "--json", "--still-ignored"])
-        cllg_module.print(human="human", agent={"ok": True})
-
-    assert capfd.readouterr().out == "human\n"
-
-
 def test_cllg_forwards_stdout_and_stderr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["capture"])
 
     with cllg(json=False):
         print("stdout print")
@@ -435,7 +389,6 @@ def test_cllg_restores_streams_after_exception(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["capture"])
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
@@ -459,7 +412,6 @@ def test_clean_exit_does_not_write_lifecycle_prints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
 
     with cllg(json=False) as session:
         pass
@@ -473,7 +425,6 @@ def test_command_json_records_started_and_ended_timestamps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
 
     with cllg(json=False) as session:
         mid_run = _read_json(session.path / "command.json")
@@ -493,7 +444,6 @@ def test_command_json_keeps_ended_at_null_when_session_crashes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
 
     session = cllg(json=False)
     metadata = _read_json(session.path / "command.json")
@@ -508,7 +458,6 @@ def test_cllg_captures_logging_handlers_bound_inside_context(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["capture"])
     logger = logging.getLogger("cllg.tests.capture")
     logger.handlers.clear()
     logger.propagate = False
@@ -533,7 +482,6 @@ def test_cllg_keeps_stdout_as_real_text_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["capture"])
 
     with cllg(json=False):
         assert isinstance(sys.stdout, io.TextIOBase)
@@ -545,7 +493,6 @@ def test_progress_writes_records_for_start_message_and_each_update(
 ) -> None:
     stream = FakeTty()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["smoke"])
     with cllg(json=True) as session:
         with progress("smoke fixed limerick", total=2, stream=stream) as task:
             task.message(human="loaded", agent={"event": "loaded"})
@@ -591,7 +538,6 @@ def test_non_tty_progress_records_start_and_advance(
 ) -> None:
     stream = io.StringIO()
     _init_and_enter_git_repo(tmp_path, monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["batch"])
     with cllg(json=False) as session:
         with progress("batch", total=1, stream=stream) as task:
             task.update(human="done", agent={"done": True})

@@ -276,15 +276,6 @@ def print(*, human: str, agent: dict[str, Any]) -> None:
     session = _current_session()
     if session is None:
         raise RuntimeError("cllg.print requires an active cllg session")
-    _print_with_session(human=human, agent=agent, session=session)
-
-
-def _print_with_session(
-    *,
-    human: str,
-    agent: dict[str, Any],
-    session: LogSession,
-) -> None:
     _validate_print_payload(human=human, agent=agent)
     text = _agent_text(agent) if session.json else human
     builtins.print(text)
