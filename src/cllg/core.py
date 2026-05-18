@@ -446,7 +446,7 @@ def _alive_progress_display(
         title=title,
         file=stream,
         force_tty=True,
-        enrich_print=True,
+        enrich_print=False,
         dual_line=True,
         receipt=True,
         max_cols=terminal_cols if terminal_cols is not None else 80,
